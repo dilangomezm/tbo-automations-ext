@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>TBO Automations</title>
+  <style>
+    :root{
+      --bg:#0b0d10;
+      --card:#13161d;
+      --border:rgba(255,255,255,0.10);
+      --border2:rgba(255,255,255,0.14);
+      --text:#e6e8ee;
+      --muted:rgba(230,232,238,0.65);
+      --accent:#f0a64a;
+      --accent2:#c88533;
+      --radius:14px;
+    }
+    body{
+      margin:0;
+      width:340px;
+      background:var(--bg);
+      color:var(--text);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    }
+    .wrap{padding:12px;}
+    .header{
+      display:flex; align-items:center; justify-content:space-between;
+      background:linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04));
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      padding:10px 10px;
+      margin-bottom:10px;
+    }
+    .brand{display:flex; align-items:center; gap:10px;}
+    .brand img{
+      width:22px; height:22px;
+      border-radius:8px;
+      border:1px solid var(--border);
+      background:rgba(255,255,255,0.04);
+    }
+    .title{font-weight:650; font-size:12px; letter-spacing:0.2px;}
+    .btn{
+      border:1px solid var(--border);
+      background:rgba(255,255,255,0.03);
+      color:var(--text);
+      padding:6px 10px;
+      border-radius:10px;
+      font-size:11px;
+      font-weight:600;
+      cursor:pointer;
+    }
+    .btn:hover{border-color:var(--border2); background:rgba(255,255,255,0.05)}
+    .btn-primary{
+      border:none;
+      background:linear-gradient(180deg, rgba(240,166,74,0.95), rgba(200,133,51,0.95));
+      color:#111;
+    }
+    .btn-primary:hover{filter:brightness(1.02)}
+
+    .section{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      padding:10px;
+      margin-bottom:10px;
+    }
+    .section-head{
+      display:flex; align-items:center; justify-content:space-between;
+      margin-bottom:8px;
+    }
+    .section-title{font-weight:650; font-size:11px; color:var(--muted);}
+
+    .item{
+      display:flex; align-items:center; justify-content:space-between;
+      border:1px solid var(--border);
+      background:rgba(255,255,255,0.02);
+      border-radius:12px;
+      padding:8px;
+      margin-top:8px;
+    }
+    .item-left{display:flex; flex-direction:column; gap:2px;}
+    .item-name{font-weight:650; font-size:12px;}
+
+    #status{font-size:10px; color:var(--muted); margin-top:8px; min-height:14px;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div class="brand">
+        <img src="icon48.png" alt="TBO" />
+        <div class="title">TBO Automations</div>
+      </div>
+      <button class="btn" id="refreshBtn">Refresh</button>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">Automations</div>
+      </div>
+      <div id="automationList"></div>
+      <div id="status"></div>
+    </div>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
