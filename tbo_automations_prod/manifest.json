@@ -2,39 +2,30 @@
   "manifest_version": 3,
   "name": "TBO Automations",
   "version": "0.1.0",
-  "description": "Internal automation toolbox for Trading Back Office (TBO).",
-  "action": {
-    "default_title": "TBO Automations",
-    "default_popup": "popup.html"
-  },
+  "description": "Herramienta interna de automatización para optimizar flujos de trabajo en TBO y BasketballMonster.",
   "icons": {
     "16": "icon16.png",
     "48": "icon48.png",
     "128": "icon128.png"
   },
-  "permissions": [
-    "storage",
-    "activeTab",
-    "tabs"
-  ],
+  "permissions": ["storage", "activeTab", "tabs"],
   "host_permissions": [
-    "<all_urls>"
+    "https://*.goldrush.llc/*",
+    "https://basketballmonster.com/*"
   ],
+  "action": {
+    "default_popup": "popup.html"
+  },
   "content_scripts": [
     {
       "matches": [
-        "http://*/*",
-        "https://*/*"
+        "https://*.goldrush.llc/*",
+        "https://basketballmonster.com/*"
       ],
       "js": [
-        "content.js",
-        "uiKit.js",
-        "alertsAssistant.js",
-        "betTicketAlert.js",
-        "BasketballMonsterNews.js",
-        "creatorQuicksBB.js",
-        "translationsAssistant.js",
-        "translationTool.js"
+        "content.js", "uiKit.js", "alertsAssistant.js", 
+        "betTicketAlert.js", "BasketballMonsterNews.js", 
+        "creatorQuicksBB.js", "translationsAssistant.js", "translationTool.js"
       ],
       "run_at": "document_idle"
     }
