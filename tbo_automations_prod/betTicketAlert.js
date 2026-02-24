@@ -105,32 +105,27 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
   paintBsrBtn();
 
   /************************************
-   * 💠 LÓGICA DE RESALTE VISUAL
+   * 💠 AYUDA VISUAL (RECUADRO)
    ************************************/
   
-  const highlightElement = (el, apply) => {
+  const applyItemHighlight = (el, apply) => {
     if (!el) return;
     if (apply) {
-        // Recuadro naranja más oscuro (0.35) con sombra y alineación centrada
-        el.style.backgroundColor = "rgba(240, 166, 74, 0.35)"; 
-        el.style.boxShadow = "0 0 6px rgba(240, 166, 74, 0.4)";
-        el.style.borderRadius = "6px";
-        el.style.padding = "2px 8px";
-        el.style.display = "inline-flex"; 
-        el.style.alignItems = "center";
-        el.style.justifyContent = "center";
-        el.style.verticalAlign = "middle";
-        el.style.lineHeight = "normal";
+      // Estilo de recuadro basado en la imagen de referencia (TM)
+      el.style.backgroundColor = "rgba(240, 166, 74, 0.35)"; // Tono más oscuro
+      el.style.boxShadow = "0 0 8px rgba(240, 166, 74, 0.4)"; // Sombra suave
+      el.style.borderRadius = "6px";
+      el.style.padding = "2px 8px";
+      el.style.display = "inline-block";
+      el.style.verticalAlign = "middle"; // Mantener alineación original
+      el.style.transition = "all 0.2s ease";
     } else {
-        el.style.backgroundColor = "";
-        el.style.boxShadow = "";
-        el.style.borderRadius = "";
-        el.style.padding = "";
-        el.style.display = "";
-        el.style.alignItems = "";
-        el.style.justifyContent = "";
-        el.style.verticalAlign = "";
-        el.style.lineHeight = "";
+      el.style.backgroundColor = "";
+      el.style.boxShadow = "";
+      el.style.borderRadius = "";
+      el.style.padding = "";
+      el.style.display = "";
+      el.style.verticalAlign = "";
     }
   };
 
@@ -138,69 +133,63 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
     const stakeFrom = parseFloat(stakeFromInput.value);
     const tmMax = parseFloat(tmMaxInput.value);
 
+    // Reset general
     document.querySelectorAll("tr[data-testid='bets-monitoring-table-row']").forEach((row) => {
-        row.style.background = "";
-        row.style.outline = "";
-        // Limpiar solo elementos marcados para evitar conflictos de estilo
-        row.querySelectorAll('[data-highlighted="true"]').forEach(el => {
-            highlightElement(el, false);
-            el.removeAttribute('data-highlighted');
-        });
+      row.style.background = "";
+      row.style.outline = "";
+      // Limpiar recuadros previos
+      row.querySelectorAll('*').forEach(el => applyItemHighlight(el, false));
     });
 
     document.querySelectorAll("tr[data-testid='bets-monitoring-table-row']").forEach((row) => {
-        let matchesNormal = false;
-        let matchesBSR = false;
+      let matchesNormal = false;
+      let matchesBSR = false;
 
-        // --- STAKE ---
-        const stakeCell = row.querySelector('[data-testid="bets-monitoring-table-row-total-stake-cell"]');
-        if (stakeCell && !Number.isNaN(stakeFrom)) {
-          const v = parseFloat((stakeCell.innerText || "").replace(/[^0-9.]/g, ""));
-          if (!Number.isNaN(v) && v >= stakeFrom) {
-            matchesNormal = true;
-            stakeCell.setAttribute('data-highlighted', 'true');
-            highlightElement(stakeCell, true);
-          }
+      // Stake
+      const stakeCell = row.querySelector('[data-testid="bets-monitoring-table-row-total-stake-cell"]');
+      if (stakeCell && !Number.isNaN(stakeFrom)) {
+        const v = parseFloat((stakeCell.innerText || "").replace(/[^0-9.]/g, ""));
+        if (!Number.isNaN(v) && v >= stakeFrom) {
+          matchesNormal = true;
+          applyItemHighlight(stakeCell, true);
         }
+      }
 
-        // --- MARGIN ---
-        const tmCell = row.querySelector('[data-testid="theoretical-margin-value"]');
-        if (tmCell && !Number.isNaN(tmMax)) {
-          const v = parseFloat((tmCell.innerText || "").replace("%", "").trim());
-          if (!Number.isNaN(v) && v <= tmMax) {
-            matchesNormal = true;
-            tmCell.setAttribute('data-highlighted', 'true');
-            highlightElement(tmCell, true);
-          }
+      // TM (Theoretical Margin)
+      const tmCell = row.querySelector('[data-testid="theoretical-margin-value"]');
+      if (tmCell && !Number.isNaN(tmMax)) {
+        const v = parseFloat((tmCell.innerText || "").replace("%", "").trim());
+        if (!Number.isNaN(v) && v <= tmMax) {
+          matchesNormal = true;
+          applyItemHighlight(tmCell, true);
         }
+      }
 
-        // --- CUSTOMER ---
-        const custCell = row.querySelector('[data-testid="bets-monitoring-table-row-customer-classification"]');
-        if (custCell) {
-          const v = (custCell.innerText || "").trim();
-          if (selectedCustomers.includes(v)) {
-            matchesNormal = true;
-            // Resalta el texto sin tocar la barra/badge
-            const textNode = custCell.querySelector('span') || custCell;
-            textNode.setAttribute('data-highlighted', 'true');
-            highlightElement(textNode, true);
-          }
+      // Customer
+      const custCell = row.querySelector('[data-testid="bets-monitoring-table-row-customer-classification"]');
+      if (custCell) {
+        const v = (custCell.innerText || "").trim();
+        if (selectedCustomers.includes(v)) {
+          matchesNormal = true;
+          // Aplicar resalte al contenedor del texto del cliente
+          applyItemHighlight(custCell, true);
         }
+      }
 
-        // --- BSR ---
-        const bsrCell = row.querySelector('[data-testid="bets-monitoring-table-row-bet-request"]');
-        if (bsrEnabled && bsrCell && (bsrCell.innerText || "").trim() === "BSR") {
-          matchesBSR = true;
-        }
+      // BSR
+      const bsrCell = row.querySelector('[data-testid="bets-monitoring-table-row-bet-request"]');
+      if (bsrEnabled && bsrCell && (bsrCell.innerText || "").trim() === "BSR") {
+        matchesBSR = true;
+      }
 
-        // Aplicar estilos de fila completa
-        if (matchesBSR) {
-          row.style.background = "rgba(52,152,219,0.18)";
-          row.style.outline = "2px solid rgba(52,152,219,0.55)";
-        } else if (matchesNormal) {
-          row.style.background = "rgba(240,166,74,0.12)";
-          row.style.outline = "2px solid rgba(240,166,74,0.45)";
-        }
+      // Estilos de fila
+      if (matchesBSR) {
+        row.style.background = "rgba(52,152,219,0.18)";
+        row.style.outline = "2px solid rgba(52,152,219,0.55)";
+      } else if (matchesNormal) {
+        row.style.background = "rgba(240,166,74,0.12)";
+        row.style.outline = "2px solid rgba(240,166,74,0.45)";
+      }
     });
   }
 
@@ -215,7 +204,7 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
     document.querySelectorAll("tr[data-testid='bets-monitoring-table-row']").forEach((row) => {
       row.style.background = "";
       row.style.outline = "";
-      row.querySelectorAll('*').forEach(el => highlightElement(el, false));
+      row.querySelectorAll('*').forEach(el => applyItemHighlight(el, false));
     });
     customerContainer.querySelectorAll("[data-value]").forEach((d) => highlightOption(d, false));
   };
