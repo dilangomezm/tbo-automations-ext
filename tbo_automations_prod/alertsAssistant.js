@@ -75,7 +75,7 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
   }
 
   // --- Hack de paginación editado ---
-  const ROW_VALUES = [25, 50, 100, 300];
+  const ROW_VALUES = [50, 100, 300];
   
   function renderRowsPerPage() {
     const chips = ROW_VALUES.map(
