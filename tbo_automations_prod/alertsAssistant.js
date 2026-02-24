@@ -74,7 +74,9 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
     alert(`✔ ${closed} assigned alerts closed.`);
   }
 
-  const ROW_VALUES = [50, 100, 500, 1000];
+  // --- Hack de paginación editado ---
+  const ROW_VALUES = [25, 50, 100, 300];
+  
   function renderRowsPerPage() {
     const chips = ROW_VALUES.map(
       (v) => `<button class="tbo-chip-btn" data-rows="${v}">${v}</button>`
