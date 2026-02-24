@@ -4,7 +4,7 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
   if (!ui) return;
 
   /************************************
-   * 💠 LISTA NUEVA DE CUSTOMERS
+   * 💠 LISTA DE CUSTOMERS
    ************************************/
   const customerOptions = [
     "default", "Test", "A3", "A2", "A1", "B3", "B2", "B1",
@@ -16,7 +16,7 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
   ];
 
   /************************************
-   * 💠 PANEL FLOTANTE (EXTENSION)
+   * 💠 PANEL FLOTANTE
    ************************************/
   const panelApi = ui.createFloatingPanel({
     id: "tbo_betticket_filters",
@@ -26,90 +26,36 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
     right: 20
   });
 
-  // Helpers
   const $ = (sel) => panelApi.body.querySelector(sel);
-  const escapeHtml = (s) =>
-    String(s ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+  const escapeHtml = (s) => String(s ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 
-  // Theme fallbacks
-  const ACCENT = ui.THEME?.accent || "#f0a64a";
   const TEXT = ui.THEME?.text || "#e6e8ee";
   const MUTED = ui.THEME?.muted || "rgba(230,232,238,0.65)";
   const BORDER = ui.THEME?.border || "rgba(255,255,255,0.10)";
   const BG_HI = "rgba(240,166,74,0.10)";
-  const BR_HI = "2px solid rgba(240,166,74,0.40)";
 
-  /************************************
-   * 💠 UI
-   ************************************/
   panelApi.setHTML(`
     <div class="tbo-col" style="gap:12px;">
       <div class="tbo-row" style="gap:10px; align-items:center; justify-content:space-between;">
-        <div style="font-size:10px; color:${MUTED}; font-weight:600;">
-          Filters
-        </div>
-
-        <button id="bsrToggle" class="tbo-btn"
-          style="
-            padding:6px 10px;
-            border:1px solid ${BORDER};
-            background: rgba(255,255,255,0.03);
-            color:${TEXT};
-            border-radius:10px;
-            font-weight:650;
-          ">BSR</button>
+        <div style="font-size:10px; color:${MUTED}; font-weight:600;">Filters</div>
+        <button id="bsrToggle" class="tbo-btn" style="padding:6px 10px; border:1px solid ${BORDER}; background: rgba(255,255,255,0.03); color:${TEXT}; border-radius:10px; font-weight:650;">BSR</button>
       </div>
-
       <div>
         <div class="tbo-label">Total Stake (€) From</div>
         <input class="tbo-input" id="stakeFrom" type="number" step="0.01" placeholder="Min" style="margin-top:6px;" />
       </div>
-
       <div>
         <div class="tbo-label">Theoretical Margin (%) Max</div>
         <input class="tbo-input" id="tmMax" type="number" step="0.1" placeholder="Max" style="margin-top:6px;" />
       </div>
-
       <div>
-        <div class="tbo-label" id="customerToggle"
-          style="cursor:pointer; display:flex; align-items:center; justify-content:space-between;">
-          <span>Customer</span>
-          <span style="opacity:0.8;">▼</span>
+        <div class="tbo-label" id="customerToggle" style="cursor:pointer; display:flex; align-items:center; justify-content:space-between;">
+          <span>Customer</span><span style="opacity:0.8;">▼</span>
         </div>
-
-        <div id="customerOptionsContainer"
-          style="
-            display:none;
-            margin-top:8px;
-            border:1px solid ${BORDER};
-            border-radius:12px;
-            padding:8px;
-            max-height:180px;
-            overflow:auto;
-            background: rgba(255,255,255,0.02);
-          ">
-          ${customerOptions
-            .map((opt) => `
-              <div data-value="${escapeHtml(opt)}"
-                style="
-                  padding:7px 8px;
-                  border-radius:10px;
-                  cursor:pointer;
-                  font-size:12px;
-                  font-weight:450;
-                  border:1px solid transparent;
-                "
-              >${escapeHtml(opt)}</div>
-            `)
-            .join("")}
+        <div id="customerOptionsContainer" style="display:none; margin-top:8px; border:1px solid ${BORDER}; border-radius:12px; padding:8px; max-height:180px; overflow:auto; background: rgba(255,255,255,0.02);">
+          ${customerOptions.map((opt) => `<div data-value="${escapeHtml(opt)}" style="padding:7px 8px; border-radius:10px; cursor:pointer; font-size:12px; font-weight:450; border:1px solid transparent;">${escapeHtml(opt)}</div>`).join("")}
         </div>
       </div>
-
       <div class="tbo-row" style="gap:10px; margin-top:2px;">
         <button class="tbo-btn tbo-btn-primary" id="applyFilter">Apply</button>
         <button class="tbo-btn" id="clearFilter">Clear</button>
@@ -117,9 +63,6 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
     </div>
   `);
 
-  /************************************
-   * 💠 STATE
-   ************************************/
   let selectedCustomers = [];
   let bsrEnabled = false;
 
@@ -129,9 +72,6 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
   const customerContainer = $("#customerOptionsContainer");
   const bsrButton = $("#bsrToggle");
 
-  /************************************
-   * 💠 CUSTOMER TOGGLE + SELECT
-   ************************************/
   customerToggle.onclick = () => {
     const cur = customerContainer.style.display;
     customerContainer.style.display = cur === "none" || !cur ? "block" : "none";
@@ -145,8 +85,6 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
   customerContainer.querySelectorAll("[data-value]").forEach((div) => {
     div.addEventListener("click", () => {
       const val = div.getAttribute("data-value");
-      if (!val) return;
-
       if (selectedCustomers.includes(val)) {
         selectedCustomers = selectedCustomers.filter((x) => x !== val);
         highlightOption(div, false);
@@ -158,38 +96,35 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
     });
   });
 
-  /************************************
-   * 💠 BSR TOGGLE
-   ************************************/
   function paintBsrBtn() {
     bsrButton.style.background = bsrEnabled ? "rgba(125,206,160,0.25)" : "rgba(255,255,255,0.03)";
     bsrButton.style.border = bsrEnabled ? "1px solid rgba(125,206,160,0.35)" : `1px solid ${BORDER}`;
-    bsrButton.style.color = TEXT;
   }
 
-  bsrButton.onclick = () => {
-    bsrEnabled = !bsrEnabled;
-    paintBsrBtn();
-    applyFilterToTable();
-  };
+  bsrButton.onclick = () => { bsrEnabled = !bsrEnabled; paintBsrBtn(); applyFilterToTable(); };
   paintBsrBtn();
 
   /************************************
-   * 💠 APPLY FILTERS (EDITADO CON SOMBRA SUAVE)
+   * 💠 LÓGICA VISUAL DE RESALTE (EDITADO)
    ************************************/
-
-  // Helper para aplicar/quitar la sombra suave a una celda
+  
   const highlightElement = (el, apply) => {
     if (!el) return;
     if (apply) {
-        // Sombra naranja suave y difuminada, sin afectar el contenido interno
-        el.style.boxShadow = "0 0 15px rgba(240, 166, 74, 0.8)";
-        el.style.borderRadius = "8px"; // Redondeo ligero para que la sombra se vea mejor
-        el.style.transition = "box-shadow 0.2s ease";
+        // Recuadro centrado, ajustado al tamaño del texto y un poco más oscuro que la fila
+        el.style.backgroundColor = "rgba(240, 166, 74, 0.25)"; 
+        el.style.boxShadow = "0 0 8px rgba(240, 166, 74, 0.4)";
+        el.style.borderRadius = "6px";
+        el.style.padding = "2px 8px";
+        el.style.display = "inline-block"; // Evita que se estire a lo ancho de la celda
+        el.style.margin = "0 auto";
     } else {
+        el.style.backgroundColor = "";
         el.style.boxShadow = "";
         el.style.borderRadius = "";
-        el.style.transition = "";
+        el.style.padding = "";
+        el.style.display = "";
+        el.style.margin = "";
     }
   };
 
@@ -197,40 +132,39 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
     const stakeFrom = parseFloat(stakeFromInput.value);
     const tmMax = parseFloat(tmMaxInput.value);
 
-    // 1. Resetear estilos de fila y limpiar sombras de celdas internas
-    document
-      .querySelectorAll("tr[data-testid='bets-monitoring-table-row']")
-      .forEach((row) => {
+    document.querySelectorAll("tr[data-testid='bets-monitoring-table-row']").forEach((row) => {
         row.style.background = "";
         row.style.outline = "";
-        // Busca cualquier elemento interno que hayamos resaltado antes y le quita la sombra
-        row.querySelectorAll('*').forEach(el => highlightElement(el, false));
-      });
+        // Limpiamos solo los elementos que nosotros mismos resaltamos
+        row.querySelectorAll('[data-highlighted="true"]').forEach(el => {
+            highlightElement(el, false);
+            el.removeAttribute('data-highlighted');
+        });
+    });
 
-    document
-      .querySelectorAll("tr[data-testid='bets-monitoring-table-row']")
-      .forEach((row) => {
+    document.querySelectorAll("tr[data-testid='bets-monitoring-table-row']").forEach((row) => {
         let matchesNormal = false;
         let matchesBSR = false;
 
-        // Total Stake >= stakeFrom
+        // Stake
         const stakeCell = row.querySelector('[data-testid="bets-monitoring-table-row-total-stake-cell"]');
         if (stakeCell && !Number.isNaN(stakeFrom)) {
           const v = parseFloat((stakeCell.innerText || "").replace(/[^0-9.]/g, ""));
           if (!Number.isNaN(v) && v >= stakeFrom) {
             matchesNormal = true;
-            highlightElement(stakeCell, true); // Aplica sombra a la celda de Stake
+            stakeCell.setAttribute('data-highlighted', 'true');
+            highlightElement(stakeCell, true);
           }
         }
 
-        // TM <= tmMax
+        // Margin
         const tmCell = row.querySelector('[data-testid="theoretical-margin-value"]');
         if (tmCell && !Number.isNaN(tmMax)) {
           const v = parseFloat((tmCell.innerText || "").replace("%", "").trim());
           if (!Number.isNaN(v) && v <= tmMax) {
             matchesNormal = true;
-            // Resaltamos el padre del valor numérico para que la sombra envuelva la zona del margen
-            highlightElement(tmCell.parentElement, true);
+            tmCell.setAttribute('data-highlighted', 'true');
+            highlightElement(tmCell, true);
           }
         }
 
@@ -240,17 +174,17 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
           const v = (custCell.innerText || "").trim();
           if (selectedCustomers.includes(v)) {
             matchesNormal = true;
-            highlightElement(custCell, true); // Aplica sombra a la celda del Cliente
+            // Intentamos resaltar el texto específico sin tocar la barra de clasificación
+            const textNode = custCell.querySelector('span') || custCell;
+            textNode.setAttribute('data-highlighted', 'true');
+            highlightElement(textNode, true);
           }
         }
 
         // BSR
         const bsrCell = row.querySelector('[data-testid="bets-monitoring-table-row-bet-request"]');
-        if (bsrEnabled && bsrCell && (bsrCell.innerText || "").trim() === "BSR") {
-          matchesBSR = true;
-        }
+        if (bsrEnabled && bsrCell && (bsrCell.innerText || "").trim() === "BSR") { matchesBSR = true; }
 
-        // PRIORIDAD VISUAL (Estilo de fila completa - se mantiene igual)
         if (matchesBSR) {
           row.style.background = "rgba(52,152,219,0.18)";
           row.style.outline = "2px solid rgba(52,152,219,0.55)";
@@ -258,40 +192,23 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
           row.style.background = "rgba(240,166,74,0.12)";
           row.style.outline = "2px solid rgba(240,166,74,0.45)";
         }
-      });
+    });
   }
 
   $("#applyFilter").onclick = applyFilterToTable;
-
   $("#clearFilter").onclick = () => {
-    selectedCustomers = [];
-    bsrEnabled = false;
-    paintBsrBtn();
-
-    stakeFromInput.value = "";
-    tmMaxInput.value = "";
-
-    // Limpieza completa al dar click en Clear
+    selectedCustomers = []; bsrEnabled = false; paintBsrBtn();
+    stakeFromInput.value = ""; tmMaxInput.value = "";
     document.querySelectorAll("tr[data-testid='bets-monitoring-table-row']").forEach((row) => {
-      row.style.background = "";
-      row.style.outline = "";
+      row.style.background = ""; row.style.outline = "";
       row.querySelectorAll('*').forEach(el => highlightElement(el, false));
     });
-
-    customerContainer.querySelectorAll("[data-value]").forEach((d) => {
-      highlightOption(d, false);
-    });
+    customerContainer.querySelectorAll("[data-value]").forEach((d) => highlightOption(d, false));
   };
 
-  /************************************
-   * 💠 OBSERVER (re-aplica al cambiar tabla)
-   ************************************/
   const table = document.querySelector("table");
   if (table) {
-    const obs = new MutationObserver(() => {
-      // Evitar re-aplicar demasiado agresivo si hay muchas mutaciones
-      applyFilterToTable();
-    });
+    const obs = new MutationObserver(() => { applyFilterToTable(); });
     obs.observe(table, { childList: true, subtree: true });
   }
 });
