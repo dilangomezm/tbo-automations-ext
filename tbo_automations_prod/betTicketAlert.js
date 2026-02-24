@@ -105,26 +105,30 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
   paintBsrBtn();
 
   /************************************
-   * 💠 LÓGICA VISUAL DE RESALTE (EDITADO)
+   * 💠 LÓGICA VISUAL DE RESALTE (CORREGIDO)
    ************************************/
   
   const highlightElement = (el, apply) => {
     if (!el) return;
     if (apply) {
-        // Recuadro centrado, ajustado al tamaño del texto y un poco más oscuro que la fila
-        el.style.backgroundColor = "rgba(240, 166, 74, 0.25)"; 
-        el.style.boxShadow = "0 0 8px rgba(240, 166, 74, 0.4)";
+        // Usamos inline-flex y vertical-align para mantener la posición original sin que "salte" hacia arriba
+        el.style.backgroundColor = "rgba(240, 166, 74, 0.28)"; 
+        el.style.boxShadow = "0 0 8px rgba(240, 166, 74, 0.45)";
         el.style.borderRadius = "6px";
         el.style.padding = "2px 8px";
-        el.style.display = "inline-block"; // Evita que se estire a lo ancho de la celda
-        el.style.margin = "0 auto";
+        el.style.display = "inline-flex"; 
+        el.style.alignItems = "center";
+        el.style.justifyContent = "center";
+        el.style.verticalAlign = "middle"; 
     } else {
         el.style.backgroundColor = "";
         el.style.boxShadow = "";
         el.style.borderRadius = "";
         el.style.padding = "";
         el.style.display = "";
-        el.style.margin = "";
+        el.style.alignItems = "";
+        el.style.justifyContent = "";
+        el.style.verticalAlign = "";
     }
   };
 
@@ -135,7 +139,6 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
     document.querySelectorAll("tr[data-testid='bets-monitoring-table-row']").forEach((row) => {
         row.style.background = "";
         row.style.outline = "";
-        // Limpiamos solo los elementos que nosotros mismos resaltamos
         row.querySelectorAll('[data-highlighted="true"]').forEach(el => {
             highlightElement(el, false);
             el.removeAttribute('data-highlighted');
@@ -146,7 +149,7 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
         let matchesNormal = false;
         let matchesBSR = false;
 
-        // Stake
+        // Stake (Corregido para no desplazarse)
         const stakeCell = row.querySelector('[data-testid="bets-monitoring-table-row-total-stake-cell"]');
         if (stakeCell && !Number.isNaN(stakeFrom)) {
           const v = parseFloat((stakeCell.innerText || "").replace(/[^0-9.]/g, ""));
@@ -168,20 +171,18 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
           }
         }
 
-        // Customer
+        // Customer (Mantiene la barra original)
         const custCell = row.querySelector('[data-testid="bets-monitoring-table-row-customer-classification"]');
         if (custCell) {
           const v = (custCell.innerText || "").trim();
           if (selectedCustomers.includes(v)) {
             matchesNormal = true;
-            // Intentamos resaltar el texto específico sin tocar la barra de clasificación
             const textNode = custCell.querySelector('span') || custCell;
             textNode.setAttribute('data-highlighted', 'true');
             highlightElement(textNode, true);
           }
         }
 
-        // BSR
         const bsrCell = row.querySelector('[data-testid="bets-monitoring-table-row-bet-request"]');
         if (bsrEnabled && bsrCell && (bsrCell.innerText || "").trim() === "BSR") { matchesBSR = true; }
 
