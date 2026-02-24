@@ -105,21 +105,22 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
   paintBsrBtn();
 
   /************************************
-   * 💠 LÓGICA VISUAL DE RESALTE (CORREGIDO)
+   * 💠 LÓGICA DE RESALTE VISUAL
    ************************************/
   
   const highlightElement = (el, apply) => {
     if (!el) return;
     if (apply) {
-        // Usamos inline-flex y vertical-align para mantener la posición original sin que "salte" hacia arriba
-        el.style.backgroundColor = "rgba(240, 166, 74, 0.28)"; 
-        el.style.boxShadow = "0 0 8px rgba(240, 166, 74, 0.45)";
+        // Recuadro naranja más oscuro (0.35) con sombra y alineación centrada
+        el.style.backgroundColor = "rgba(240, 166, 74, 0.35)"; 
+        el.style.boxShadow = "0 0 6px rgba(240, 166, 74, 0.4)";
         el.style.borderRadius = "6px";
         el.style.padding = "2px 8px";
         el.style.display = "inline-flex"; 
         el.style.alignItems = "center";
         el.style.justifyContent = "center";
-        el.style.verticalAlign = "middle"; 
+        el.style.verticalAlign = "middle";
+        el.style.lineHeight = "normal";
     } else {
         el.style.backgroundColor = "";
         el.style.boxShadow = "";
@@ -129,6 +130,7 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
         el.style.alignItems = "";
         el.style.justifyContent = "";
         el.style.verticalAlign = "";
+        el.style.lineHeight = "";
     }
   };
 
@@ -139,6 +141,7 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
     document.querySelectorAll("tr[data-testid='bets-monitoring-table-row']").forEach((row) => {
         row.style.background = "";
         row.style.outline = "";
+        // Limpiar solo elementos marcados para evitar conflictos de estilo
         row.querySelectorAll('[data-highlighted="true"]').forEach(el => {
             highlightElement(el, false);
             el.removeAttribute('data-highlighted');
@@ -149,7 +152,7 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
         let matchesNormal = false;
         let matchesBSR = false;
 
-        // Stake (Corregido para no desplazarse)
+        // --- STAKE ---
         const stakeCell = row.querySelector('[data-testid="bets-monitoring-table-row-total-stake-cell"]');
         if (stakeCell && !Number.isNaN(stakeFrom)) {
           const v = parseFloat((stakeCell.innerText || "").replace(/[^0-9.]/g, ""));
@@ -160,7 +163,7 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
           }
         }
 
-        // Margin
+        // --- MARGIN ---
         const tmCell = row.querySelector('[data-testid="theoretical-margin-value"]');
         if (tmCell && !Number.isNaN(tmMax)) {
           const v = parseFloat((tmCell.innerText || "").replace("%", "").trim());
@@ -171,21 +174,26 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
           }
         }
 
-        // Customer (Mantiene la barra original)
+        // --- CUSTOMER ---
         const custCell = row.querySelector('[data-testid="bets-monitoring-table-row-customer-classification"]');
         if (custCell) {
           const v = (custCell.innerText || "").trim();
           if (selectedCustomers.includes(v)) {
             matchesNormal = true;
+            // Resalta el texto sin tocar la barra/badge
             const textNode = custCell.querySelector('span') || custCell;
             textNode.setAttribute('data-highlighted', 'true');
             highlightElement(textNode, true);
           }
         }
 
+        // --- BSR ---
         const bsrCell = row.querySelector('[data-testid="bets-monitoring-table-row-bet-request"]');
-        if (bsrEnabled && bsrCell && (bsrCell.innerText || "").trim() === "BSR") { matchesBSR = true; }
+        if (bsrEnabled && bsrCell && (bsrCell.innerText || "").trim() === "BSR") {
+          matchesBSR = true;
+        }
 
+        // Aplicar estilos de fila completa
         if (matchesBSR) {
           row.style.background = "rgba(52,152,219,0.18)";
           row.style.outline = "2px solid rgba(52,152,219,0.55)";
@@ -197,11 +205,16 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
   }
 
   $("#applyFilter").onclick = applyFilterToTable;
+
   $("#clearFilter").onclick = () => {
-    selectedCustomers = []; bsrEnabled = false; paintBsrBtn();
-    stakeFromInput.value = ""; tmMaxInput.value = "";
+    selectedCustomers = [];
+    bsrEnabled = false;
+    paintBsrBtn();
+    stakeFromInput.value = "";
+    tmMaxInput.value = "";
     document.querySelectorAll("tr[data-testid='bets-monitoring-table-row']").forEach((row) => {
-      row.style.background = ""; row.style.outline = "";
+      row.style.background = "";
+      row.style.outline = "";
       row.querySelectorAll('*').forEach(el => highlightElement(el, false));
     });
     customerContainer.querySelectorAll("[data-value]").forEach((d) => highlightOption(d, false));
