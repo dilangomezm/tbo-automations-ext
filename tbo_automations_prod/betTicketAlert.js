@@ -175,18 +175,36 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
   paintBsrBtn();
 
   /************************************
-   * 💠 APPLY FILTERS (CORREGIDO)
+   * 💠 APPLY FILTERS (EDITADO CON SOMBRA SUAVE)
    ************************************/
+
+  // Helper para aplicar/quitar la sombra suave a una celda
+  const highlightElement = (el, apply) => {
+    if (!el) return;
+    if (apply) {
+        // Sombra naranja suave y difuminada, sin afectar el contenido interno
+        el.style.boxShadow = "0 0 15px rgba(240, 166, 74, 0.8)";
+        el.style.borderRadius = "8px"; // Redondeo ligero para que la sombra se vea mejor
+        el.style.transition = "box-shadow 0.2s ease";
+    } else {
+        el.style.boxShadow = "";
+        el.style.borderRadius = "";
+        el.style.transition = "";
+    }
+  };
+
   function applyFilterToTable() {
     const stakeFrom = parseFloat(stakeFromInput.value);
     const tmMax = parseFloat(tmMaxInput.value);
 
-    // Reset
+    // 1. Resetear estilos de fila y limpiar sombras de celdas internas
     document
       .querySelectorAll("tr[data-testid='bets-monitoring-table-row']")
       .forEach((row) => {
         row.style.background = "";
         row.style.outline = "";
+        // Busca cualquier elemento interno que hayamos resaltado antes y le quita la sombra
+        row.querySelectorAll('*').forEach(el => highlightElement(el, false));
       });
 
     document
@@ -199,21 +217,31 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
         const stakeCell = row.querySelector('[data-testid="bets-monitoring-table-row-total-stake-cell"]');
         if (stakeCell && !Number.isNaN(stakeFrom)) {
           const v = parseFloat((stakeCell.innerText || "").replace(/[^0-9.]/g, ""));
-          if (!Number.isNaN(v) && v >= stakeFrom) matchesNormal = true;
+          if (!Number.isNaN(v) && v >= stakeFrom) {
+            matchesNormal = true;
+            highlightElement(stakeCell, true); // Aplica sombra a la celda de Stake
+          }
         }
 
         // TM <= tmMax
         const tmCell = row.querySelector('[data-testid="theoretical-margin-value"]');
         if (tmCell && !Number.isNaN(tmMax)) {
           const v = parseFloat((tmCell.innerText || "").replace("%", "").trim());
-          if (!Number.isNaN(v) && v <= tmMax) matchesNormal = true;
+          if (!Number.isNaN(v) && v <= tmMax) {
+            matchesNormal = true;
+            // Resaltamos el padre del valor numérico para que la sombra envuelva la zona del margen
+            highlightElement(tmCell.parentElement, true);
+          }
         }
 
         // Customer
         const custCell = row.querySelector('[data-testid="bets-monitoring-table-row-customer-classification"]');
         if (custCell) {
           const v = (custCell.innerText || "").trim();
-          if (selectedCustomers.includes(v)) matchesNormal = true;
+          if (selectedCustomers.includes(v)) {
+            matchesNormal = true;
+            highlightElement(custCell, true); // Aplica sombra a la celda del Cliente
+          }
         }
 
         // BSR
@@ -222,7 +250,7 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
           matchesBSR = true;
         }
 
-        // PRIORIDAD VISUAL
+        // PRIORIDAD VISUAL (Estilo de fila completa - se mantiene igual)
         if (matchesBSR) {
           row.style.background = "rgba(52,152,219,0.18)";
           row.style.outline = "2px solid rgba(52,152,219,0.55)";
@@ -243,9 +271,11 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
     stakeFromInput.value = "";
     tmMaxInput.value = "";
 
+    // Limpieza completa al dar click en Clear
     document.querySelectorAll("tr[data-testid='bets-monitoring-table-row']").forEach((row) => {
       row.style.background = "";
       row.style.outline = "";
+      row.querySelectorAll('*').forEach(el => highlightElement(el, false));
     });
 
     customerContainer.querySelectorAll("[data-value]").forEach((d) => {
