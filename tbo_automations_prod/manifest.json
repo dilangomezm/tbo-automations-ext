@@ -23,7 +23,7 @@
         "https://basketballmonster.com/*"
       ],
       "js": [
-        "content.js", "uiKit.js", "alertsAssistant.js", 
+        "content.js", "uiKit.js", "alertsAssistant.js", "creatorBoost.js",
         "betTicketAlert.js", "BasketballMonsterNews.js", "ManualPPS.js",
         "creatorQuicksBB.js", "translationsAssistant.js", "translationTool.js"
       ],
