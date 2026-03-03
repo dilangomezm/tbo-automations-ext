@@ -502,6 +502,10 @@
                 <div style="font-size:11px; font-weight:600;">Show on Homepage</div>
                 <input id="cb-homepage" type="checkbox" class="cb-switch" ${DEFAULT_SHOW_ON_HOMEPAGE ? "checked" : ""} />
               </div>
+              <div id="cb-priority-container" style="display: ${DEFAULT_SHOW_ON_HOMEPAGE ? "block" : "none"}; margin-top: 10px;">
+                <div class="cb-label">Priority</div>
+                <input id="cb-priority" class="cb-input" value="" placeholder="" />
+              </div>
             </div>
 
             <div id="cb-error" class="cb-err"></div>
@@ -528,6 +532,12 @@
             else if (v === "Boost Factor") mainLabel.textContent = "Multiplier";
           };
 
+          const homepageSwitch = bodyEl.querySelector("#cb-homepage");
+          const priorityContainer = bodyEl.querySelector("#cb-priority-container");
+          homepageSwitch.onchange = () => {
+            priorityContainer.style.display = homepageSwitch.checked ? "block" : "none";
+          };
+
           bodyEl.querySelector("#cb-run").onclick = () => {
             const checkedBrands = Array.from(bodyEl.querySelectorAll('input[type="checkbox"][data-brand]:checked')).map(cb => cb.getAttribute("data-brand"));
             const min = bodyEl.querySelector("#cb-min").value?.trim();
@@ -537,7 +547,8 @@
             const totalStake = bodyEl.querySelector("#cb-total-stake")?.value?.trim() || "";
             const boostMainValue = bodyEl.querySelector("#cb-boost-main-input")?.value?.trim() || "";
             const sameStart = !!bodyEl.querySelector("#cb-eventtiming-same")?.checked;
-            const showHome = !!bodyEl.querySelector("#cb-homepage")?.checked;
+            const showHome = !!homepageSwitch?.checked;
+            const priorityVal = showHome ? (bodyEl.querySelector("#cb-priority")?.value?.trim() || "") : "";
             
             const err = bodyEl.querySelector("#cb-error");
             if (!checkedBrands.length) return err.textContent = "Select at least 1 brand.";
@@ -546,6 +557,7 @@
             if (Number(max) < Number(min)) return err.textContent = "Max >= Min required.";
             if (bType !== "None" && (!maxStake || isNaN(Number(maxStake)) || !totalStake || isNaN(Number(totalStake)))) return err.textContent = "Stake limits invalid.";
             if ((bType === "Odds" || bType === "Boost Factor") && (!boostMainValue || isNaN(Number(boostMainValue)))) return err.textContent = "Boost value invalid.";
+            if (showHome && priorityVal && isNaN(Number(priorityVal))) return err.textContent = "Priority must be a valid number.";
 
             container.remove();
             resolve({
@@ -554,6 +566,7 @@
               minOdds: String(min), maxOdds: String(max), boostType: bType,
               boostMainValue: String(boostMainValue), maxStakeLimit: String(maxStake), totalStakeLimit: String(totalStake),
               eventTimingSameAsStart: sameStart, showOnHomepage: showHome,
+              priority: priorityVal
             });
           };
         };
@@ -942,7 +955,21 @@
       }
 
       try { await applyEventTimingSameAsStart(dialog, !!cfg.eventTimingSameAsStart); } catch {}
-      try { await applyShowOnHomepage(dialog, !!cfg.showOnHomepage); } catch {}
+      
+      try { 
+        await applyShowOnHomepage(dialog, !!cfg.showOnHomepage);
+        await sleep(250); // Darle tiempo a la UI del TBO para revelar "Priority"
+        
+        // Inyectar Priority si se solicitó mostrar en homepage y tiene valor
+        if (cfg.showOnHomepage && cfg.priority) {
+            const priorityInput = findInputByLabelText(dialog, "Priority") || dialog.querySelector('input[name="priority"], #priority');
+            if (priorityInput) {
+                await clickInputHuman(priorityInput); 
+                setReactInputValue(priorityInput, String(cfg.priority)); 
+                await sleep(180);
+            }
+        }
+      } catch {}
 
       await clickInputHuman(inputMin); await sleep(150);
       const saveBtn = await waitFor(() => dialog.querySelector('[data-testid="prebuild-bet-create-save-button"]'), { timeout: 8000, interval: 150 });
