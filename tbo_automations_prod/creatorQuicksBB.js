@@ -9,11 +9,15 @@
        * CONFIG (defaults)
        *****************************************************************/
       const DEFAULT_BRANDS = [
+        "Sweden/BetMGM",
+        "Sweden/GoGo",
+        "Sweden/Expekt",
+        "Sweden/LeoVegas",
+        "Brazil/BetMGM",
         "Denmark/Expekt",
         "Denmark/LeoVegas",
+        "Canada/LeoVegas",
         "Finland/Expekt",
-        "Brazil/BetMGM",
-        "Sweden/GoGO",
       ];
 
       const DEFAULT_MIN_ODDS = "1.5";
@@ -305,9 +309,8 @@
         const body = document.createElement("div");
         body.style.padding = "10px";
 
+        // ✅ Ninguna marca seleccionada por defecto
         const brandChecks = DEFAULT_BRANDS.map((b) => {
-          const checked =
-            b === "Denmark/Expekt" || b === "Denmark/LeoVegas" || b === "Brazil/BetMGM";
           return `
             <label style="
               display:flex; align-items:center; gap:10px;
@@ -315,7 +318,7 @@
               border:1px solid ${THEME.BORDER};
               background:rgba(255,255,255,0.02);
               cursor:pointer; user-select:none;">
-              <input type="checkbox" data-brand="${b}" ${checked ? "checked" : ""} style="accent-color:${THEME.ACCENT};" />
+              <input type="checkbox" data-brand="${b}" style="accent-color:${THEME.ACCENT};" />
               <span style="font-size:12px; font-weight:600; color:${THEME.TEXT};">${b}</span>
             </label>
           `;
@@ -928,4 +931,3 @@
     }
   });
 })();
-
