@@ -7,11 +7,15 @@
     // BASE CONFIG
     // =========================
     const DEFAULT_BRANDS = [
+      "Sweden/BetMGM",
+      "Sweden/GoGo",
+      "Sweden/Expekt",
+      "Sweden/LeoVegas",
+      "Brazil/BetMGM",
       "Denmark/Expekt",
       "Denmark/LeoVegas",
-      "Finland/Expekt",
-      "Brazil/BetMGM",
-      "Sweden/GoGO",
+      "Canada/LeoVegas",
+      "Finland/Expekt"
     ];
 
     const DEFAULT_MIN_ODDS = "1.5";
