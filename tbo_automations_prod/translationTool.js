@@ -1,24 +1,20 @@
 // translationTool.js
-// Translation Tool (full UI refresh + extension-compatible)
-// - NO auto-open on page load
-// - Opens ONLY when invoked via window.registerAutomation()
-// - Clean dark UI, draggable, minimize, close (X)
-// - No "(Lite)" in title, no version pill, no "Close tool" button
-// - Status starts empty
+// Base-driven translations with Gemini fallback
 (() => {
-  // Must exist in your extension runtime
-  if (!window.registerAutomation) return;
-
   const PANEL_ID = "tbo-translation-tool";
-  const POS_KEY = "tbo_translation_tool_pos_v2";
+  const CACHE_KEY = "tbo_translations_cache_v10";
+  const GEMINI_CACHE_KEY = "tbo_gemini_cache_v1";
+  const GEMINI_COOLDOWN_MS = 1200;
+  const GEMINI_MODEL = "gemini-2.5-flash";
 
-  // Import (Exact + Templates) with Swedish
-  const USER_EXACT_KEY = "tbo_translation_user_base_exact_v3_sv"; // { enKey: {da,fi,pt,sv} }
-  const USER_TPL_KEY = "tbo_translation_user_base_tpl_v3_sv"; // [{ enTpl, subtype, daTpl, fiTpl, ptTpl, svTpl }, ...]
+  const SHEET_URL =
+    "https://script.google.com/a/macros/leovegas.com/s/AKfycbwCS3E0zXO7XrHjPRUUotGSZchQgm3leZuROFg9irBFeePBtXj14WwTbL1PxsydmtBiXg/exec";
 
-  // ---------------- Helpers ----------------
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => (s || "").trim().toLowerCase();
+
+  let GEMINI_KEY = null;
+  let lastGeminiAt = 0;
 
   function setNativeValue(el, value) {
     if (!el) return;
@@ -29,7 +25,7 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  async function waitFor(selector, tries = 60, delay = 120) {
+  async function waitFor(selector, tries = 40, delay = 150) {
     for (let i = 0; i < tries; i++) {
       const el = document.querySelector(selector);
       if (el) return el;
@@ -42,226 +38,664 @@
     return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
-  // ---------------- Modal mapping (ignore input values) ----------------
-  function getRowTextWithoutInputs(row) {
-    try {
-      const clone = row.cloneNode(true);
-      clone.querySelectorAll("input, textarea").forEach((el) => el.remove());
-      return norm(clone.textContent || "");
-    } catch {
-      return norm(row.textContent || "");
-    }
-  }
-
   function detectLangFromRow(row) {
-    const txt = getRowTextWithoutInputs(row);
-    const isEN = txt.includes("english") || txt.includes("inglés");
-    const isDA = txt.includes("danish") || txt.includes("dansk");
-    const isFI = txt.includes("finnish") || txt.includes("suomi");
-    const isPT =
-      txt.includes("portuguese") || txt.includes("português") || txt.includes("portugues");
-    const isSV = txt.includes("swedish") || txt.includes("svenska");
-
-    if (isEN) return "en";
-    if (isDA) return "da";
-    if (isFI) return "fi";
-    if (isPT) return "pt";
-    if (isSV) return "sv";
+    const clone = row.cloneNode(true);
+    clone.querySelectorAll("input, textarea").forEach((el) => el.remove());
+    const txt = norm(clone.textContent || "");
+    if (txt.includes("english") || txt.includes("inglés")) return "en";
+    if (txt.includes("danish") || txt.includes("dansk")) return "da";
+    if (txt.includes("finnish") || txt.includes("suomi")) return "fi";
+    if (txt.includes("portuguese") || txt.includes("português") || txt.includes("portugues")) return "pt";
+    if (txt.includes("swedish") || txt.includes("svenska")) return "sv";
+    if (txt.includes("french") || txt.includes("français")) return "fr";
     return null;
   }
 
   function getModalFields() {
     const rows = Array.from(
-      document.querySelectorAll(
-        '[data-testid*="multilanguage-translations-popup"][data-testid*="row"]'
-      )
+      document.querySelectorAll('[data-testid*="multilanguage-translations-popup"][data-testid*="row"]')
     );
-    const map = { en: null, da: null, fi: null, pt: null, sv: null };
-
+    const map = { en: null, da: null, fi: null, pt: null, sv: null, fr: null };
     for (const row of rows) {
       const lang = detectLangFromRow(row);
       const input = row.querySelector("input, textarea");
-      if (!lang || !input) continue;
-      map[lang] = input;
+      if (lang && input) map[lang] = input;
     }
     return map;
   }
 
-  function fieldsArePresent(fields) {
-    // Swedish may exist or not
-    return fields?.en && fields?.da && fields?.fi && fields?.pt;
+  // =========================================================
+  // DATA INDEX (BASE)
+  // =========================================================
+  let EXACT_MAP = new Map();
+  let EXACT_KEYS_BY_LEN = [];
+  let TEMPLATE_LIST = [];
+
+  function normalizeText(s) {
+    return String(s || "")
+      .replace(/\u00A0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
-  // ---------------- Data store ----------------
-  // Build CORE_EXACT from ordered pairs to avoid silent overwrites (duplicate keys in the sheet)
-  function buildCoreExactFromPairs(pairs) {
-    const out = {};
-    const seen = new Set();
-    const dupes = [];
+  function normalizeDashSpacing(text) {
+    return normalizeText(String(text || "").replace(/\s*[-–]\s*/g, " - "));
+  }
 
-    for (const [kRaw, v] of pairs) {
-      const k = String(kRaw || "").trim();
-      const kn = norm(k);
-      if (!kn) continue;
+  // Lookup key ONLY for base matching.
+  // This does NOT modify the original TBO text shown in the modal.
+  function getLookupKey(text) {
+    return normalizeDashSpacing(String(text || ""))
+      .trim()
+      .toLowerCase();
+  }
 
-      if (seen.has(kn)) {
-        // keep FIRST occurrence to avoid unexpected changes
-        dupes.push(k);
-        continue;
+  function rebuildExactIndexFromObject(obj) {
+    EXACT_MAP = new Map(Object.entries(obj || {}));
+    EXACT_KEYS_BY_LEN = Array.from(EXACT_MAP.keys()).sort((a, b) => b.length - a.length);
+  }
+
+  const TOKEN_DEFS = [
+    { token: "Tournament X", placeholder: "@@TOK_TOURNAMENT_X@@", pattern: ".+?" },
+    { token: "Player X", placeholder: "@@TOK_PLAYER_X@@", pattern: ".+?" },
+    { token: "Player Y", placeholder: "@@TOK_PLAYER_Y@@", pattern: ".+?" },
+    { token: "Team X", placeholder: "@@TOK_TEAM_X@@", pattern: ".+?" },
+    { token: "Team Y", placeholder: "@@TOK_TEAM_Y@@", pattern: ".+?" },
+    { token: "xth", placeholder: "@@TOK_XTH@@", pattern: "\\d+(?:st|nd|rd|th)?" },
+    { token: "X", placeholder: "@@TOK_X@@", pattern: ".+?" },
+  ].sort((a, b) => b.token.length - a.token.length);
+
+  function hasTemplateToken(text) {
+    const s = String(text || "");
+    return TOKEN_DEFS.some((t) => s.includes(t.token));
+  }
+
+  function compileTemplate(enTpl) {
+    let raw = normalizeDashSpacing(enTpl);
+    const seq = [];
+    const counters = Object.create(null);
+
+    for (const def of TOKEN_DEFS) {
+      const parts = raw.split(def.token);
+      if (parts.length === 1) continue;
+
+      raw = parts[0];
+      for (let i = 1; i < parts.length; i++) {
+        counters[def.token] = (counters[def.token] || 0) + 1;
+        const groupName = `${def.placeholder
+          .replace(/@/g, "")
+          .replace(/TOK_/g, "")
+          .replace(/_+/g, "_")
+          .toLowerCase()}_${counters[def.token]}`;
+
+        raw += `${def.placeholder}${groupName}${def.placeholder}` + parts[i];
+        seq.push({
+          token: def.token,
+          groupName,
+          pattern: def.pattern,
+        });
       }
-      seen.add(kn);
-
-      out[k] = {
-        da: v?.da ?? "",
-        fi: v?.fi ?? "",
-        pt: v?.pt ?? "",
-        sv: v?.sv ?? "",
-      };
     }
 
-    if (dupes.length) {
-      console.warn("[TranslationTool] Duplicate CORE keys ignored (kept first):", dupes);
+    let pattern = escapeRegExp(raw);
+    pattern = pattern.replace(/\s*\\-\s*/g, "\\s*[-–]\\s*");
+
+    for (const item of seq) {
+      const def = TOKEN_DEFS.find((t) => t.token === item.token);
+      if (!def) continue;
+
+      const marker = escapeRegExp(`${def.placeholder}${item.groupName}${def.placeholder}`);
+      pattern = pattern.replace(new RegExp(marker), `(?<${item.groupName}>${item.pattern})`);
     }
+
+    return {
+      re: new RegExp(`^${pattern}$`, "i"),
+      seq,
+    };
+  }
+
+  function fillTemplateString(langTpl, seq, groups) {
+    let out = String(langTpl || "");
+
+    for (const item of seq) {
+      const val = groups?.[item.groupName];
+      if (val == null) continue;
+      out = out.replace(item.token, String(val));
+    }
+
     return out;
   }
 
-  // Embedded default base (Outcome → translations)
-  const CORE_EXACT_PAIRS = [
-    ["1st Quarter", { da: "1. Fjerdedel", fi: "1. Neljännes", pt: "1º Quadrante", sv: "1:a kvartalet" }],
-    ["2nd Quarter", { da: "2. Fjerdedel", fi: "2. Neljännes", pt: "2º Quadrante", sv: "andra kvartalet" }],
-    ["3rd Quarter", { da: "3. Fjerdedel", fi: "3. Neljännes", pt: "3º Quadrante", sv: "3:e kvartalet" }],
-    ["4th Quarter", { da: "4. Fjerdedel", fi: "4. Neljännes", pt: "4º Quadrante", sv: "4:e kvartalet" }],
-    ["Top Half", { da: "Øverste Halvdel", fi: "Ylempi Puolisko", pt: "Metade de Cima", sv: "Övre halvan" }],
-    ["Bottom Half", { da: "Nederste Halvdel", fi: "Alempi Puolisko", pt: "Metade de Baixo", sv: "Nedre halvan" }],
-    ["Runner Up", { da: "Sølvvinder", fi: "Kakkonen", pt: "Vice-campeão", sv: "Andra plats" }],
-    ["Winner", { da: "Vinder", fi: "Voittaja", pt: "Vencedor", sv: "Vinnare" }],
-    ["Semi Final", { da: "Semifinale", fi: "Välierä", pt: "Semifinal", sv: "Semifinal" }],
-    ["Quarter Final", { da: "Kvartfinaler", fi: "Puolivälierät", pt: "Quartas de Final", sv: "Kvartsfinal" }],
-    ["Round 2", { da: "2. runde", fi: "2. kierros", pt: "2ª Rodada", sv: "Omgång 2" }],
-    ["Round 1", { da: "1. runde", fi: "1. kierros", pt: "1ª Rodada", sv: "Omgång 1" }],
-    ["Round 3", { da: "3. runde", fi: "3. kierros", pt: "3ª Rodada", sv: "Omgång 3" }],
-    ["Round 4", { da: "4. runde", fi: "4. kierros", pt: "4ª Rodada", sv: "Omgång 4" }],
-    ["Yes", { da: "Ja", fi: "Kyllä", pt: "Sim", sv: "Ja" }],
-    ["No", { da: "Nej", fi: "Ei", pt: "Não", sv: "Inga" }],
-    ["Zero", { da: "Nul", fi: "Nolla", pt: "Zero", sv: "Noll" }],
-    ["One", { da: "En", fi: "Yksi", pt: "Um", sv: "En" }],
-    ["Two", { da: "To", fi: "Kaksi", pt: "Dois", sv: "Två" }],
-    ["Three", { da: "Tre", fi: "Kolme", pt: "Três", sv: "Tre" }],
-    ["Four", { da: "Fire", fi: "Neljä", pt: "Quatro", sv: "Fyra" }],
-    ["Five", { da: "Fem", fi: "Viisi", pt: "Cinco", sv: "Fem" }],
-    ["Six", { da: "Seks", fi: "Kuusi", pt: "Seis", sv: "Sex" }],
-    ["Seven", { da: "Syv", fi: "Seitsemän", pt: "Sete", sv: "Sju" }],
-    ["Eight", { da: "Otte", fi: "Kahdeksan", pt: "Oito", sv: "Åtta" }],
-    ["Nine", { da: "Ni", fi: "Yhdeksän", pt: "Nove", sv: "Nio" }],
-    ["Ten", { da: "Ti", fi: "Kymmenen", pt: "Dez", sv: "Tio" }],
-    ["Double", { da: "Doubler", fi: "Nelinpeli", pt: "Duplas", sv: "Dubbel" }],
-    ["Rest Of The World", { da: "Øvrige verden", fi: "Muu maailma", pt: "Resto do Mundo", sv: "Resten av världen" }],
-    ["Europe", { da: "Europa", fi: "Eurooppa", pt: "Europa", sv: "Europa" }],
-    ["0 Teams", { da: "0 Hold", fi: "0 Joukkueet", pt: "0 times", sv: "0 lag" }],
-    ["1 Team", { da: "1 Hold", fi: "1 Joukkue", pt: "1 time", sv: "1 lag" }],
-    ["2 Teams", { da: "2 Hold", fi: "2 Joukkueet", pt: "2 times", sv: "2 lag" }],
-    ["Over", { da: "Over", fi: "Yli", pt: "Mais", sv: "Över" }],
-    ["Under", { da: "Under", fi: "Alle", pt: "Menos", sv: "Under" }],
-    ["Youth", { da: "Ungdom", fi: "Nuoret", pt: "Juvenil", sv: "Ungdomsturnering" }],
-    ["Weekly Specials", { da: "Uge specials", fi: "Viikon erikoiset", pt: "Especiais da semana", sv: "Veckans specialerbjudanden" }],
-    ["Season Specials", { da: "Sæson specials", fi: "Kauden erikoiset", pt: "Especiais da temporada", sv: "Säsongsspecialer" }],
-    ["Away Teams", { da: "Udehold", fi: "Vierasjoukkueet", pt: "Times visitantes", sv: "Bortalag" }],
-    ["Home Teams", { da: "Hjemmehold", fi: "Kotijoukkueet", pt: "Times da casa", sv: "Hemmalag" }],
-    ["Tie", { da: "Uafgjort", fi: "Tasapeli", pt: "Empate", sv: "Slips" }],
-    ["Round of 16", { da: "Ottendedelsfinaler", fi: "Neljännesvälierät", pt: "Oitavas de Final", sv: "Åttondelsfinal" }],
-    ["Round of 32", { da: "Sekstendedelsfinaler", fi: "32 parhaan kierros", pt: "16 avos de final", sv: "Omgång 32" }],
-    ["Group Stage", { da: "Gruppespil", fi: "Lohkovaihe", pt: "Fase de Grupos", sv: "Gruppspel" }],
-    ["South America", { da: "Sydamerika", fi: "Etelä-Amerikka", pt: "América do Sul", sv: "Sydamerika" }],
-    ["Africa", { da: "Afrika", fi: "Afrikka", pt: "África", sv: "Afrika" }],
-    ["Asia", { da: "Asien", fi: "Aasia", pt: "Ásia", sv: "Asien" }],
-    ["Oceania", { da: "Oceanien", fi: "Oseania", pt: "Oceania", sv: "Oceanien" }],
-    ["AFC/NFC West", { da: "AFC/NFC West", fi: "AFC/NFC West", pt: "AFC/NFC West", sv: "AFC/NFC Väst" }],
-    ["AFC/NFC East", { da: "AFC/NFC East", fi: "AFC/NFC East", pt: "AFC/NFC East", sv: "AFC/NFC Öst" }],
-    ["AFC/NFC North", { da: "AFC/NFC North", fi: "AFC/NFC North", pt: "AFC/NFC North", sv: "AFC/NFC Nord" }],
-    ["AFC/NFC South", { da: "AFC/NFC South", fi: "AFC/NFC South", pt: "AFC/NFC South", sv: "AFC/NFC Syd" }],
-    ["Odd", { da: "Ulige", fi: "Pariton", pt: "Ímpar", sv: "Udda" }],
-    ["Even", { da: "Lige", fi: "Parillinen", pt: "Par", sv: "Även" }],
-    ["1st Practice", { da: "1. Træning", fi: "1. Harjoitukset", pt: "1º Treino Livre", sv: "1:a övningen" }],
-    ["2nd Practice", { da: "2. Træning", fi: "2. Harjoitukset", pt: "2º Treino Livre", sv: "2:a övningen" }],
-    ["3rd Practice", { da: "3. Træning", fi: "3. Harjoitukset", pt: "3º Treino Livre", sv: "3:e övningen" }],
-    ["No Retirement", { da: "Ingen Udgåede", fi: "Ei Keskeytyksiä", pt: "Sem abandono", sv: "Ingen pensionering" }],
-    ["5-10 Seconds", { da: "5-10 sekunder", fi: "5-10 sekuntia", pt: "5-10 segundos", sv: "5–10 sekunder" }],
-    ["Under 5 Seconds", { da: "Under 5 sekunder", fi: "Alle 5 sekunnin", pt: "Menos de 5 segundos", sv: "Under 5 sekunder" }],
-    ["Over 10 Seconds", { da: "Over 10 sekunder", fi: "Yli 10 sekuntia", pt: "Mais de 10 segundos", sv: "Över 10 sekunder" }],
-    ["Other Country", { da: "Andet Land", fi: "Muu Maa", pt: "Outro país", sv: "Andra länder" }],
-    ["Great Britain", { da: "Storbritannien", fi: "Iso-Britannia", pt: "Grã-Bretanha", sv: "Storbritannien" }],
-    ["Australia", { da: "Australien", fi: "Australia", pt: "Austrália", sv: "Australien" }],
-    ["France", { da: "Frankrig", fi: "Ranska", pt: "França", sv: "Frankrike" }],
-    ["Spain", { da: "Spanien", fi: "Espanja", pt: "Espanha", sv: "Spanien" }],
-    ["3 or More", { da: "3 eller flere", fi: "3 Tai Enemmän", pt: "3 ou mais", sv: "3 eller fler" }],
-    ["Team X to beat Team Y", { da: "Team X Slår Team Y", fi: "Team X Voitti Team Y", pt: "Time X para vencer o Time Y", sv: "Lag X slår lag Y" }],
-    ["Conference Finals", { da: "Konferencefinaler", fi: "Konferenssifinaalit", pt: "Finais de Conferência", sv: "Konferensfinaler" }],
-    ["Second Round", { da: "Anden Runde", fi: "Toinen Kierros", pt: "Segunda Rodada", sv: "Andra omgången" }],
-    ["First Round", { da: "Første Runde", fi: "Ensimmäinen kierros", pt: "Primeira Rodada", sv: "Första omgången" }],
-    ["Games", { da: "Kampe", fi: "Ottelu", pt: "Jogos", sv: "Spel" }],
-    ["Eleven or more", { da: "Elleve Eller Flere", fi: "Yksitoista Tai Enemmän", pt: "Onze ou mais", sv: "Elva eller fler" }],
-    ["Wildcard Series", { da: "Wildcard-Runde", fi: "Wildcard-Kierros", pt: "Série Wildcard", sv: "Wildcard-serien" }],
-    ["Divisional Series", { da: "Divisionsserie", fi: "Divisioonasarja", pt: "Série Divisional", sv: "Divisionsserie" }],
-    ["League Championship Series", { da: "Ligaens Finale", fi: "Liigafinaalit", pt: "Final da Liga", sv: "Ligamästerskapsserien" }],
-    ["American League", { da: "American League", fi: "American Leaguen", pt: "Liga Americana", sv: "Amerikanska ligan" }],
-    ["National League", { da: "National League", fi: "National Leaguen", pt: "Liga Nacional", sv: "Nationella ligan" }],
-    ["1st Round", { da: "1. Runde", fi: "1. kierroksen", pt: "1ª Rodada", sv: "1:a omgången" }],
-    ["2nd Round", { da: "2. Runde", fi: "2. kierroksen", pt: "2ª Rodada", sv: "2:a omgången" }],
-    ["3rd Round", { da: "3. Runde", fi: "3. kierroksen", pt: "3ª Rodada", sv: "3:e omgången" }],
-    ["Eastern Conference", { da: "Østkonferencen", fi: "Itäinen Konferenssi", pt: "Conferência Leste", sv: "Östra konferensen" }],
-    ["Western Conference", { da: "Vestkonferencen", fi: "Läntinen konferenssi", pt: "Conferência Oeste", sv: "Västra konferensen" }],
-    ["Atlantic Division", { da: "Atlanterhavsdivisionen", fi: "Atlantin divisioona", pt: "Divisão Atlântica", sv: "Atlantdivisionen" }],
-    ["Central Division", { da: "Central Divisionen", fi: "Keskinen divisioona", pt: "Divisão Central", sv: "Centrala divisionen" }],
-    ["Pacific Division", { da: "Stillehavsdivisionen", fi: "Tyynenmeren divisioona", pt: "Divisão do Pacífico", sv: "Stillahavsdivisionen" }],
-    ["Metropolitan Division", { da: "Metropolitan Divisionen", fi: "Metropolitan divisioona", pt: "Divisão Metropolitana", sv: "Storstadsdivisionen" }],
-    ["Men", { da: "Mænd", fi: "Miehet", pt: "Masculino", sv: "Herrar" }],
-    ["Women", { da: "Kvinder", fi: "Naiset", pt: "Feminino", sv: "Damer" }],
-    ["Reserves", { da: "Reserver", fi: "Reservit", pt: "Reservas", sv: "Reservlag" }],
-    ["(W)", { da: "(K)", fi: "(N)", pt: "(F)", sv: "(D)" }],
-    ["U20", { da: "U20", fi: "U20", pt: "Sub-20", sv: "U20" }],
-    ["U20W", { da: "U20K", fi: "U20N", pt: "Sub-20F", sv: "U20D" }],
-    ["1 Shot", { da: "1 Skud", fi: "1 Laukaus", pt: "1 Tacadas", sv: "1 Skott" }],
-    ["Play Off", { da: "Slutspil", fi: "Pudotuspelit", pt: "Playoff", sv: "Slutspel" }],
-    ["4 Shots Or More", { da: "4 Skud Eller Flere", fi: "4 Laukausta Tai Enemmän", pt: "4 tacadas ou mais", sv: "4 skott eller fler" }],
-    ["2 Shots", { da: "2 Skud", fi: "2 Laukausta", pt: "2 Tacadas", sv: "2 skott" }],
-    ["3 Shots", { da: "3 Skud", fi: "3 Laukausta", pt: "3 Tacadas", sv: "3 skott" }],
-    ["Mixed Double", { da: "Mixed Double", fi: "Sekanelinpeli", pt: "Duplas Mistas", sv: "Mixad dubbel" }],
-    ["Equal", { da: "Lige", fi: "Tasan", pt: "Igual", sv: "Lika" }],
-    ["Doubles", { da: "Doubler", fi: "Nelinpeli", pt: "Duplas", sv: "Dubbel" }],
-  ];
+  function rebuildTemplateIndex() {
+    TEMPLATE_LIST = [];
 
-  const CORE_EXACT = buildCoreExactFromPairs(CORE_EXACT_PAIRS);
+    for (const [enKey, trObj] of EXACT_MAP.entries()) {
+      const en = normalizeDashSpacing(enKey);
+      if (!en || !hasTemplateToken(en)) continue;
 
-  const CORE_TEMPLATES = [
-    {
-      enTpl: "Tournament X - Winner",
-      subtype: "Tournament Winner",
-      daTpl: "Tournament X - Vinder",
-      fiTpl: "Tournament X - Voittaja",
-      ptTpl: "Tournament X - Vencedor",
-      svTpl: "Tournament X - Vinnare",
-    },
-    {
-      enTpl: "Tournament X - Finalists",
-      subtype: "Finalist",
-      daTpl: "Tournament X - Finalister",
-      fiTpl: "Tournament X - Finalistit",
-      ptTpl: "Tournament X - Finalistas",
-      svTpl: "Tournament X - Finalister",
-    },
-    {
-      enTpl: "Tournament X - Stage of Elimination - Team X",
-      subtype: "Elimination Round",
-      daTpl: "Tournament X - Elimineringsrunde - Team X",
-      fiTpl: "Tournament X - Pudotuspelivaihe - Team X",
-      ptTpl: "Tournament X - Fase de Eliminação - Team X",
-      svTpl: "Tournament X - Utslagningsrunda - Team X",
-    },
-  ];
+      const compiled = compileTemplate(en);
 
-  function loadUserExact() {
+      TEMPLATE_LIST.push({
+        en,
+        da: trObj?.da || "",
+        fi: trObj?.fi || "",
+        pt: trObj?.pt || "",
+        sv: trObj?.sv || "",
+        fr: trObj?.fr || "",
+        _re: compiled.re,
+        _seq: compiled.seq,
+      });
+    }
+
+    TEMPLATE_LIST.sort((a, b) => String(b.en || "").length - String(a.en || "").length);
+  }
+
+  function rebuildAllIndexesFromObject(obj) {
+    rebuildExactIndexFromObject(obj);
+    rebuildTemplateIndex();
+  }
+
+  function buildIndexFromSheet(rows) {
+    const out = {};
+    if (!rows || rows.length < 2) return;
+
+    const header = rows[0].map(norm);
+    const idx = (name) => header.indexOf(name);
+
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r || r.length < 2) continue;
+
+      const en = r[idx("english")];
+      if (!en) continue;
+
+      out[getLookupKey(en)] = {
+        da: r[idx("danish")] || "",
+        fi: r[idx("finnish")] || "",
+        pt: r[idx("portuguese")] || "",
+        sv: r[idx("swedish")] || "",
+        fr: r[idx("french")] || "",
+      };
+    }
+
+    localStorage.setItem(CACHE_KEY, JSON.stringify(out));
+    rebuildAllIndexesFromObject(out);
+  }
+
+  function loadFromCache() {
     try {
-      const raw = localStorage.getItem(USER_EXACT_KEY);
+      const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
+      rebuildAllIndexesFromObject(cached);
+    } catch {
+      rebuildAllIndexesFromObject({});
+    }
+  }
+
+  loadFromCache();
+
+  // =========================================================
+  // LAST TRANSLATION CONTEXT / SOURCE TO STORE
+  // =========================================================
+  let LAST_TRANSLATION_CONTEXT = {
+    rawSource: "",
+    changedIndexes: [],
+    storedValues: {
+      en: "",
+      da: "",
+      fi: "",
+      pt: "",
+      sv: "",
+      fr: "",
+    },
+    result: null,
+  };
+
+  function splitMarketParts(text) {
+    return normalizeDashSpacing(text)
+      .split(/\s[-–]\s/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+  }
+
+  function sanitizeGeminiText(s) {
+    return String(s || "")
+      .replace(/\u00A0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function detectChangedIndexes(originalText, result) {
+    const original = sanitizeGeminiText(originalText);
+    if (!original) return [];
+
+    const originalParts = splitMarketParts(original);
+    if (!originalParts.length) return [];
+
+    const langs = ["da", "fi", "pt", "sv", "fr"];
+    const changedIndexes = [];
+
+    for (let i = 0; i < originalParts.length; i++) {
+      const srcPart = originalParts[i];
+      let changed = false;
+
+      for (const lang of langs) {
+        const translatedText = sanitizeGeminiText(result?.[lang] || "");
+        if (!translatedText) continue;
+
+        const translatedParts = splitMarketParts(translatedText);
+        const translatedPart = translatedParts[i];
+
+        if (!translatedPart) continue;
+
+        if (norm(translatedPart) !== norm(srcPart)) {
+          changed = true;
+          break;
+        }
+      }
+
+      if (changed) changedIndexes.push(i);
+    }
+
+    return changedIndexes;
+  }
+
+  function pickPartsByIndexes(text, indexes) {
+    const clean = sanitizeGeminiText(text);
+    if (!clean) return "";
+
+    const parts = splitMarketParts(clean);
+    if (!parts.length) return clean;
+    if (!indexes?.length) return clean;
+
+    const picked = indexes.map((i) => parts[i]).filter(Boolean);
+
+    return picked.length ? picked.join(" - ") : clean;
+  }
+
+  function buildStoredValues(originalText, result) {
+    const changedIndexes = detectChangedIndexes(originalText, result);
+
+    const storedValues = {
+      en: pickPartsByIndexes(originalText, changedIndexes),
+      da: pickPartsByIndexes(result?.da || "", changedIndexes),
+      fi: pickPartsByIndexes(result?.fi || "", changedIndexes),
+      pt: pickPartsByIndexes(result?.pt || "", changedIndexes),
+      sv: pickPartsByIndexes(result?.sv || "", changedIndexes),
+      fr: pickPartsByIndexes(result?.fr || "", changedIndexes),
+    };
+
+    return {
+      changedIndexes,
+      storedValues,
+    };
+  }
+
+  // =========================================================
+  // GENERIC BASE-DRIVEN LOGIC
+  // =========================================================
+
+  function getSwedishOrdinalWord(n) {
+    const map = {
+      1: "Första",
+      2: "Andra",
+      3: "Tredje",
+      4: "Fjärde",
+    };
+    return map[n] || `${n}:e`;
+  }
+
+  function getFrenchQuarterOrdinal(n) {
+    if (n === 1) return "1er";
+    return `${n}ème`;
+  }
+
+  function splitMarketPartsForTranslation(text) {
+    return normalizeDashSpacing(text)
+      .split(/\s[-–]\s/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+  }
+
+  function renderNumberedLabel(kind, n, lang) {
+    if (!Number.isFinite(n)) return null;
+
+    const k = String(kind || "").toLowerCase();
+
+    // -------------------------
+    // QUARTER
+    // -------------------------
+    if (k === "quarter") {
+      if (lang === "da") return `${n}. Fjerdedel`;
+      if (lang === "fi") return `${n}. Neljännes`;
+      if (lang === "pt") return `${n}º Quadrante`;
+      if (lang === "sv") return `${getSwedishOrdinalWord(n)} kvarten`;
+      if (lang === "fr") return `${getFrenchQuarterOrdinal(n)} Quart`;
+      return null;
+    }
+
+    // -------------------------
+    // ROUND
+    // -------------------------
+    if (k === "round") {
+      if (lang === "da") return `${n}. runde`;
+      if (lang === "fi") return `${n}. kierros`;
+      if (lang === "pt") return `${n}ª Rodada`;
+      if (lang === "sv") return `omgång ${n}`;
+      if (lang === "fr") return `Tour ${n}`;
+      return null;
+    }
+
+    // -------------------------
+    // STAGE
+    // -------------------------
+    if (k === "stage") {
+      if (lang === "da") return `${n}. etape`;
+      if (lang === "fi") return `${n}. etapin`;
+      if (lang === "pt") return `Etapa ${n}`;
+      if (lang === "sv") return `Etapp ${n}`;
+      if (lang === "fr") return `Étape ${n}`;
+      return null;
+    }
+
+    // -------------------------
+    // SET
+    // -------------------------
+    if (k === "set") {
+      if (lang === "da") return `${n}. sæt`;
+      if (lang === "fi") return `${n}. erä`;
+      if (lang === "pt") return `${n}º Set`;
+      if (lang === "sv") return `Set ${n}`;
+      if (lang === "fr") return `${n}er Set`;
+      return null;
+    }
+
+    // -------------------------
+    // MAP
+    // -------------------------
+    if (k === "map") {
+      if (lang === "da") return `Map ${n}`;
+      if (lang === "fi") return `Kartta ${n}`;
+      if (lang === "pt") return `Mapa ${n}`;
+      if (lang === "sv") return `Karta ${n}`;
+      if (lang === "fr") return `Carte ${n}`;
+      return null;
+    }
+
+    // -------------------------
+    // LEG
+    // -------------------------
+    if (k === "leg") {
+      if (lang === "da") return `${n}. leg`;
+      if (lang === "fi") return `${n}. leg`;
+      if (lang === "pt") return `${n}ª Perna`;
+      if (lang === "sv") return `Leg ${n}`;
+      if (lang === "fr") return `Leg ${n}`;
+      return null;
+    }
+
+    // -------------------------
+    // HEAT
+    // -------------------------
+    if (k === "heat") {
+      if (lang === "da") return `${n}. heat`;
+      if (lang === "fi") return `${n}. erä`;
+      if (lang === "pt") return `${n}ª Eliminatória`;
+      if (lang === "sv") return `Heat ${n}`;
+      if (lang === "fr") return `Série ${n}`;
+      return null;
+    }
+
+    return null;
+  }
+
+  function translateSingleNumberedLabel(segment, lang) {
+    const s = normalizeDashSpacing(segment);
+
+    const patterns = [
+      {
+        kind: "quarter",
+        re1: /^Quarter\s*[-_]*\s*(\d+)$/i,
+        re2: /^(\d+)(st|nd|rd|th)\s+Quarter$/i,
+      },
+      {
+        kind: "round",
+        re1: /^Round\s*[-_]*\s*(\d+)$/i,
+        re2: /^(\d+)(st|nd|rd|th)\s+Round$/i,
+      },
+      {
+        kind: "stage",
+        re1: /^Stage\s*[-_]*\s*(\d+)$/i,
+        re2: /^(\d+)(st|nd|rd|th)\s+Stage$/i,
+      },
+      {
+        kind: "set",
+        re1: /^Set\s*[-_]*\s*(\d+)$/i,
+        re2: /^(\d+)(st|nd|rd|th)\s+Set$/i,
+      },
+      {
+        kind: "map",
+        re1: /^Map\s*[-_]*\s*(\d+)$/i,
+        re2: /^(\d+)(st|nd|rd|th)\s+Map$/i,
+      },
+      {
+        kind: "leg",
+        re1: /^Leg\s*[-_]*\s*(\d+)$/i,
+        re2: /^(\d+)(st|nd|rd|th)\s+Leg$/i,
+      },
+      {
+        kind: "heat",
+        re1: /^Heat\s*[-_]*\s*(\d+)$/i,
+        re2: /^(\d+)(st|nd|rd|th)\s+Heat$/i,
+      },
+    ];
+
+    for (const p of patterns) {
+      let m = s.match(p.re1);
+      if (m) {
+        const n = Number(m[1]);
+        const out = renderNumberedLabel(p.kind, n, lang);
+        if (out) return out;
+      }
+
+      m = s.match(p.re2);
+      if (m) {
+        const n = Number(m[1]);
+        const out = renderNumberedLabel(p.kind, n, lang);
+        if (out) return out;
+      }
+    }
+
+    return null;
+  }
+
+  function translateNumberedLabelInsideText(text, lang) {
+    let s = String(text || "");
+
+    const patterns = [
+      { kind: "quarter", re1: /\bQuarter\s*[-_]*\s*(\d+)\b/gi, re2: /\b(\d+)(st|nd|rd|th)\s+Quarter\b/gi },
+      { kind: "round",   re1: /\bRound\s*[-_]*\s*(\d+)\b/gi,   re2: /\b(\d+)(st|nd|rd|th)\s+Round\b/gi },
+      { kind: "stage",   re1: /\bStage\s*[-_]*\s*(\d+)\b/gi,   re2: /\b(\d+)(st|nd|rd|th)\s+Stage\b/gi },
+      { kind: "set",     re1: /\bSet\s*[-_]*\s*(\d+)\b/gi,     re2: /\b(\d+)(st|nd|rd|th)\s+Set\b/gi },
+      { kind: "map",     re1: /\bMap\s*[-_]*\s*(\d+)\b/gi,     re2: /\b(\d+)(st|nd|rd|th)\s+Map\b/gi },
+      { kind: "leg",     re1: /\bLeg\s*[-_]*\s*(\d+)\b/gi,     re2: /\b(\d+)(st|nd|rd|th)\s+Leg\b/gi },
+      { kind: "heat",    re1: /\bHeat\s*[-_]*\s*(\d+)\b/gi,    re2: /\b(\d+)(st|nd|rd|th)\s+Heat\b/gi },
+    ];
+
+    for (const p of patterns) {
+      s = s.replace(p.re1, (_m, d) => {
+        const n = Number(d);
+        const out = renderNumberedLabel(p.kind, n, lang);
+        return out || _m;
+      });
+
+      s = s.replace(p.re2, (_m, d) => {
+        const n = Number(d);
+        const out = renderNumberedLabel(p.kind, n, lang);
+        return out || _m;
+      });
+    }
+
+    return s;
+  }
+
+  function postProcessTranslatedText(text, lang) {
+    return translateNumberedLabelInsideText(text, lang);
+  }
+
+  function translateTemplateSegment(segment, lang) {
+    const s = normalizeDashSpacing(segment);
+
+    for (const tpl of TEMPLATE_LIST) {
+      const m = s.match(tpl._re);
+      if (!m) continue;
+
+      const langTpl = tpl?.[lang];
+      if (!langTpl) return s;
+
+      return fillTemplateString(langTpl, tpl._seq, m.groups || {});
+    }
+
+    return null;
+  }
+
+  function translateExactSegment(segment, lang) {
+    const clean = normalizeDashSpacing(segment);
+    const exact = EXACT_MAP.get(getLookupKey(clean));
+
+    if (exact && exact[lang]) return exact[lang];
+
+    let out = clean;
+
+    for (const key of EXACT_KEYS_BY_LEN) {
+      const row = EXACT_MAP.get(key);
+      const tr = row?.[lang];
+      if (!tr) continue;
+
+      const src = normalizeDashSpacing(key);
+      const re = new RegExp(
+        `(^|[\\s\\-–/:,()])(${escapeRegExp(src)})(?=$|[\\s\\-–/:,()])`,
+        "gi"
+      );
+
+      out = out.replace(re, (_m, p1) => `${p1}${tr}`);
+    }
+
+    return out;
+  }
+
+  function translateSegment(segment, lang) {
+    const clean = normalizeDashSpacing(segment);
+
+    // 0) Generic numbered label exact segment FIRST
+    // This is the key fix for cases like "Stage 7"
+    const directNumbered = translateSingleNumberedLabel(clean, lang);
+    if (directNumbered) {
+      return directNumbered;
+    }
+
+    // 1) Exact / case-insensitive lookup through normalized key
+    const exact = EXACT_MAP.get(getLookupKey(clean));
+    if (exact?.[lang]) {
+      return postProcessTranslatedText(exact[lang], lang);
+    }
+
+    // 2) Template
+    const tpl = translateTemplateSegment(clean, lang);
+    if (tpl) {
+      return postProcessTranslatedText(tpl, lang);
+    }
+
+    // 3) Partial exact
+    const partial = translateExactSegment(clean, lang);
+    if (norm(partial) !== norm(clean)) {
+      return postProcessTranslatedText(partial, lang);
+    }
+
+    // 4) Generic inside text
+    const generic = postProcessTranslatedText(clean, lang);
+    if (norm(generic) !== norm(clean)) {
+      return generic;
+    }
+
+    return clean;
+  }
+
+  function reorderTranslatedMarketParts(parts, lang) {
+    const out = [...parts];
+
+    // Danish special reorder:
+    // Tournament - 7. etape - vinder
+    // =>
+    // Tournament - vinder 7. etape
+    if (lang === "da" && out.length >= 3) {
+      for (let i = 0; i < out.length - 1; i++) {
+        const current = String(out[i] || "").trim();
+        const next = String(out[i + 1] || "").trim();
+
+        const stageMatch = current.match(/^(\d+)\.\s*etape$/i);
+        const winnerMatch = next.match(/^vinder$/i);
+
+        if (stageMatch && winnerMatch) {
+          out.splice(i, 2, `vinder ${stageMatch[1]}. etape`);
+          break;
+        }
+      }
+    }
+
+    return out;
+  }
+
+  function translateMarket(srcText, lang) {
+    const original = normalizeDashSpacing(srcText);
+    if (!original) return "";
+
+    const parts = splitMarketPartsForTranslation(original);
+    if (!parts.length) return original;
+
+    let translatedParts = parts.map((part) => translateSegment(part, lang));
+    translatedParts = reorderTranslatedMarketParts(translatedParts, lang);
+
+    return translatedParts.join(" - ");
+  }
+
+  function applyBaseAll(srcText) {
+    const original = normalizeDashSpacing(srcText);
+
+    const da = translateMarket(original, "da");
+    const fi = translateMarket(original, "fi");
+    const pt = translateMarket(original, "pt");
+    let sv = translateMarket(original, "sv");
+    let fr = translateMarket(original, "fr");
+
+    if (!sv || norm(sv) === norm(original)) sv = original;
+    if (!fr || norm(fr) === norm(original)) fr = original;
+
+    return {
+      da,
+      fi,
+      pt,
+      sv,
+      fr,
+      mode: "generic",
+    };
+  }
+
+  // =========================================================
+  // GEMINI FALLBACK + SMART TRANSLATION FLOW
+  // =========================================================
+
+  function refreshGeminiKey() {
+    GEMINI_KEY = String(GEMINI_KEY || "").trim() || null;
+    return GEMINI_KEY;
+  }
+
+  function clearGeminiKey() {
+    GEMINI_KEY = null;
+  }
+
+  function loadGeminiCache() {
+    try {
+      const raw = localStorage.getItem(GEMINI_CACHE_KEY);
       if (!raw) return {};
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === "object" ? parsed : {};
@@ -269,499 +703,376 @@
       return {};
     }
   }
-  function saveUserExact(obj) {
+
+  function saveGeminiCache(cache) {
     try {
-      localStorage.setItem(USER_EXACT_KEY, JSON.stringify(obj));
+      localStorage.setItem(GEMINI_CACHE_KEY, JSON.stringify(cache));
     } catch {}
   }
 
-  function loadUserTemplates() {
-    try {
-      const raw = localStorage.getItem(USER_TPL_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
+  function getGeminiCacheCount() {
+    const c = loadGeminiCache();
+    return Object.keys(c).length;
   }
-  function saveUserTemplates(arr) {
+
+  function clearGeminiCache() {
     try {
-      localStorage.setItem(USER_TPL_KEY, JSON.stringify(arr));
+      localStorage.removeItem(GEMINI_CACHE_KEY);
     } catch {}
   }
 
-  function buildExactMap() {
-    const user = loadUserExact();
-    const merged = { ...CORE_EXACT, ...user };
-    return new Map(Object.entries(merged).map(([k, v]) => [norm(k), v]));
+  function postFixPT(s) {
+    return String(s || "")
+      .replace(/\bremates\b/gi, "chutes")
+      .replace(/\bremate\b/gi, "chute")
+      .replace(/\bfinalizações\b/gi, "chutes")
+      .replace(/\bfinalização\b/gi, "chute");
   }
 
-  let EXACT_MAP = buildExactMap();
-  let EXACT_KEYS_BY_LEN = Array.from(EXACT_MAP.keys()).sort((a, b) => b.length - a.length);
+  function tryParseGeminiJson(rawText) {
+    let raw = String(rawText || "").trim();
+    if (!raw) return null;
 
-  function rebuildExactIndex() {
-    EXACT_MAP = buildExactMap();
-    EXACT_KEYS_BY_LEN = Array.from(EXACT_MAP.keys()).sort((a, b) => b.length - a.length);
-  }
+    raw = raw.replace(/^\uFEFF/, "").trim();
 
-  // ---------------- Template engine ----------------
-  const TOKEN_DEFS = [
-    { token: "Tournament X", placeholder: "@@TOK_TOURN@@", base: "tournament" },
-    { token: "Team X", placeholder: "@@TOK_TEAMX@@", base: "teamX" },
-    { token: "Player X", placeholder: "@@TOK_PLAYERX@@", base: "playerX" },
-    { token: "Player Y", placeholder: "@@TOK_PLAYERY@@", base: "playerY" },
-    { token: "xth", placeholder: "@@TOK_XTH@@", base: "xth" },
-    { token: "X", placeholder: "@@TOK_X@@", base: "X" },
-  ].sort((a, b) => b.token.length - a.token.length);
+    try {
+      return JSON.parse(raw);
+    } catch {}
 
-  function compileTemplate(enTpl) {
-    let raw = String(enTpl || "");
-    for (const d of TOKEN_DEFS) {
-      if (!raw.includes(d.token)) continue;
-      raw = raw.split(d.token).join(d.placeholder);
+    const fenced =
+      raw.match(/```json\s*([\s\S]*?)\s*```/i) ||
+      raw.match(/```\s*([\s\S]*?)\s*```/i);
+
+    if (fenced) {
+      try {
+        return JSON.parse(fenced[1].trim());
+      } catch {}
     }
 
-    const seq = [];
-    const counters = Object.create(null);
-    const phRe = /@@TOK_[A-Z0-9_]+@@/g;
-    let m;
-    while ((m = phRe.exec(raw)) !== null) {
-      const ph = m[0];
-      const def = TOKEN_DEFS.find((x) => x.placeholder === ph);
-      if (!def) continue;
-      counters[def.base] = (counters[def.base] || 0) + 1;
-      seq.push({ token: def.token, groupName: `${def.base}_${counters[def.base]}` });
+    const first = raw.indexOf("{");
+    const last = raw.lastIndexOf("}");
+    if (first >= 0 && last > first) {
+      const candidate = raw.slice(first, last + 1).trim();
+      try {
+        return JSON.parse(candidate);
+      } catch {}
     }
 
-    let s = escapeRegExp(raw);
-    s = s.replace(/\s*\\-\s*/g, "\\s*[-–]\\s*");
-    s = s.replace(/\bvs\b/gi, "vs\\.?");
-
-    function groupFor(token, gname) {
-      if (token === "Tournament X") return `(?<${gname}>.+?)`;
-      if (token === "xth") return `(?<${gname}>\\d+(?:st|nd|rd|th)?)`;
-      return `(?<${gname}>.+?)`;
-    }
-
-    for (const item of seq) {
-      const placeholder = TOKEN_DEFS.find((d) => d.token === item.token)?.placeholder;
-      if (!placeholder) continue;
-      s = s.replace(new RegExp(escapeRegExp(placeholder)), groupFor(item.token, item.groupName));
-    }
-
-    return { re: new RegExp(`^${s}$`, "i"), seq };
-  }
-
-  function fillTemplateString(langTpl, seq, groups) {
-    let out = String(langTpl || "");
-    for (const item of seq) {
-      const val = groups?.[item.groupName];
-      if (val == null) continue;
-      const idx = out.indexOf(item.token);
-      if (idx >= 0) out = out.slice(0, idx) + String(val) + out.slice(idx + item.token.length);
-    }
-    return out;
-  }
-
-  let TEMPLATE_LIST = [];
-  function rebuildTemplateIndex() {
-    const user = loadUserTemplates();
-    const byKey = new Map();
-    for (const t of CORE_TEMPLATES) byKey.set(norm(t.enTpl), t);
-    for (const t of user) byKey.set(norm(t.enTpl), t);
-
-    const ordered = Array.from(byKey.values()).sort(
-      (a, b) => String(b.enTpl || "").length - String(a.enTpl || "").length
-    );
-
-    TEMPLATE_LIST = ordered.map((t) => {
-      const compiled = compileTemplate(t.enTpl);
-      return { ...t, _re: compiled.re, _seq: compiled.seq };
-    });
-  }
-  rebuildTemplateIndex();
-
-  function matchTemplateSmart(srcText) {
-    const s = String(srcText || "");
-    for (const t of TEMPLATE_LIST) {
-      const m = s.match(t._re);
-      if (!m) continue;
-      const g = m.groups || {};
-      return {
-        da: fillTemplateString(t.daTpl, t._seq, g),
-        fi: fillTemplateString(t.fiTpl, t._seq, g),
-        pt: fillTemplateString(t.ptTpl, t._seq, g),
-        sv: fillTemplateString(t.svTpl || "", t._seq, g),
-        subtype: t.subtype || "",
-      };
-    }
     return null;
   }
 
-  // ---------------- Post-process: Round X ----------------
-  function translateRoundInText(text, lang) {
-    let s = String(text || "");
+  function buildGeminiPrompt(text) {
+    return `
+You are a sportsbook market translation engine.
 
-    s = s.replace(/\bRound\s*[-_]*\s*(\d+)\b/gi, (_m, d) => {
-      const n = Number(d);
-      if (!Number.isFinite(n)) return _m;
-      if (lang === "da") return `${n}. Runde`;
-      if (lang === "fi") return `${n}. kierros`;
-      if (lang === "pt") return `${n}ª Rodada`;
-      return `${n}:a Rundan`;
-    });
+Translate the input from English into:
+- Danish (da)
+- Finnish (fi)
+- Portuguese (pt)
+- Swedish (sv)
+- French (fr)
 
-    s = s.replace(/\b(\d+)(st|nd|rd|th)\s+Round\b/gi, (_m, d) => {
-      const n = Number(d);
-      if (!Number.isFinite(n)) return _m;
-      if (lang === "da") return `${n}. Runde`;
-      if (lang === "fi") return `${n}. kierros`;
-      if (lang === "pt") return `${n}ª Rodada`;
-      return `${n}:a Rundan`;
-    });
+Rules:
+- Use sportsbook and betting-market terminology.
+- Keep tournament names unchanged.
+- Keep competition names unchanged.
+- Keep player names unchanged.
+- Keep team names unchanged.
+- Keep proper nouns unchanged.
+- Keep numbers unchanged unless a natural ordinal form is required in the target language.
+- Translate only the market wording that should be localized.
+- Do not add explanations.
+- Do not add notes.
+- Do not add markdown.
+- Do not wrap the answer in code fences.
+- Return exactly one JSON object and nothing else.
 
-    return s;
+Required output format:
+{"da":"","fi":"","pt":"","sv":"","fr":""}
+
+Input:
+${text}
+    `.trim();
   }
 
-  // ---------------- Exact replacement ----------------
-  function applyExactToText(srcText, lang) {
-    const original = String(srcText || "");
-    let out = original;
+  function sanitizeGeminiResult(srcText, parsed, fromCache = false) {
+    const original = sanitizeGeminiText(srcText);
 
-    const exact = EXACT_MAP.get(norm(original));
-    if (exact && exact[lang]) return exact[lang];
+    return {
+      da: sanitizeGeminiText(parsed?.da || original),
+      fi: sanitizeGeminiText(parsed?.fi || original),
+      pt: postFixPT(sanitizeGeminiText(parsed?.pt || original)),
+      sv: sanitizeGeminiText(parsed?.sv || original),
+      fr: sanitizeGeminiText(parsed?.fr || original),
+      mode: "gemini",
+      _cached: !!fromCache,
+    };
+  }
 
-    for (const key of EXACT_KEYS_BY_LEN) {
-      const tr = EXACT_MAP.get(key)?.[lang];
-      if (!tr) continue;
-      const re = new RegExp(
-        `(^|[\\s\\-\\/:,()])(${escapeRegExp(key)})(?=$|[\\s\\-\\/:,()])`,
-        "gi"
-      );
-      out = out.replace(re, (m, p1) => `${p1}${tr}`);
+  function buildGeminiCacheKey(text) {
+    return norm(sanitizeGeminiText(text));
+  }
+
+  function countChangedTranslations(original, result) {
+    const src = norm(normalizeDashSpacing(original));
+    if (!result) return 0;
+
+    let count = 0;
+    for (const lang of ["da", "fi", "pt", "sv", "fr"]) {
+      const val = norm(normalizeDashSpacing(result[lang] || ""));
+      if (val && val !== src) count++;
+    }
+    return count;
+  }
+
+  function hasAnyTranslationChanged(original, result) {
+    return countChangedTranslations(original, result) > 0;
+  }
+
+  function shouldAutoPushGeminiResult(srcText, result) {
+    const original = norm(sanitizeGeminiText(srcText));
+    if (!result) return false;
+
+    return ["da", "fi", "pt", "sv", "fr"].some((lang) => {
+      const v = norm(sanitizeGeminiText(result[lang] || ""));
+      return v && v !== original;
+    });
+  }
+
+  async function tryAutoPushGeminiResultToSheet(srcText, result) {
+    try {
+      if (!srcText || !result) return false;
+
+      const builtStore = buildStoredValues(srcText, result);
+
+      const enText = sanitizeGeminiText(builtStore.storedValues.en || "");
+      const daText = sanitizeGeminiText(builtStore.storedValues.da || "");
+      const fiText = sanitizeGeminiText(builtStore.storedValues.fi || "");
+      const ptText = sanitizeGeminiText(builtStore.storedValues.pt || "");
+      const svText = sanitizeGeminiText(builtStore.storedValues.sv || "");
+      const frText = sanitizeGeminiText(builtStore.storedValues.fr || "");
+
+      if (!enText) return false;
+      if (!shouldAutoPushGeminiResult(enText, {
+        da: daText,
+        fi: fiText,
+        pt: ptText,
+        sv: svText,
+        fr: frText,
+      })) {
+        return false;
+      }
+
+      const queryParams =
+        `?action=add` +
+        `&en=${encodeURIComponent(enText)}` +
+        `&da=${encodeURIComponent(daText)}` +
+        `&fi=${encodeURIComponent(fiText)}` +
+        `&pt=${encodeURIComponent(ptText)}` +
+        `&sv=${encodeURIComponent(svText)}` +
+        `&fr=${encodeURIComponent(frText)}`;
+
+      await fetch(SHEET_URL + queryParams, {
+        method: "GET",
+        credentials: "omit",
+        cache: "no-store",
+      }).catch(() => null);
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function translateWithGemini(text) {
+    const sourceText = sanitizeGeminiText(text);
+    const apiKey = refreshGeminiKey();
+
+    if (!apiKey) {
+      throw new Error("No Gemini API key loaded.");
     }
 
-    out = translateRoundInText(out, lang);
-    return out;
+    const cacheKey = buildGeminiCacheKey(sourceText);
+    const cache = loadGeminiCache();
+
+    if (cache[cacheKey] && cache[cacheKey].da != null) {
+      return sanitizeGeminiResult(sourceText, cache[cacheKey], true);
+    }
+
+    const now = Date.now();
+    const wait = GEMINI_COOLDOWN_MS - (now - lastGeminiAt);
+    if (wait > 0) await sleep(wait);
+    lastGeminiAt = Date.now();
+
+    const endpoint =
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+    const body = {
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: buildGeminiPrompt(sourceText),
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0,
+        topP: 0.1,
+        topK: 1,
+        maxOutputTokens: 400,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            da: { type: "STRING" },
+            fi: { type: "STRING" },
+            pt: { type: "STRING" },
+            sv: { type: "STRING" },
+            fr: { type: "STRING" },
+          },
+          required: ["da", "fi", "pt", "sv", "fr"],
+        },
+      },
+    };
+
+    const r = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const rawHttpText = await r.text().catch(() => "");
+
+    if (!r.ok) {
+      if (r.status === 429) {
+        throw new Error("Gemini 429 (quota/cooldown).");
+      }
+      throw new Error(`Gemini error (${r.status}): ${rawHttpText || r.statusText}`);
+    }
+
+    let data;
+    try {
+      data = JSON.parse(rawHttpText);
+    } catch {
+      throw new Error("Gemini returned non-JSON HTTP payload.");
+    }
+
+    if (data?.promptFeedback?.blockReason) {
+      throw new Error(`Gemini blocked: ${data.promptFeedback.blockReason}`);
+    }
+
+    const candidate = data?.candidates?.[0];
+    const modelText =
+      candidate?.content?.parts?.map((p) => p?.text || "").join("") || "";
+
+    let parsed = tryParseGeminiJson(modelText);
+
+    if (!parsed && candidate?.content?.parts?.[0]?.text) {
+      parsed = tryParseGeminiJson(candidate.content.parts[0].text);
+    }
+
+    if (!parsed) {
+      throw new Error("Gemini did not return valid JSON.");
+    }
+
+    const result = sanitizeGeminiResult(sourceText, parsed, false);
+
+    const cacheToSave = loadGeminiCache();
+    cacheToSave[cacheKey] = {
+      da: result.da,
+      fi: result.fi,
+      pt: result.pt,
+      sv: result.sv,
+      fr: result.fr,
+      ts: Date.now(),
+      source: "gemini",
+      model: GEMINI_MODEL,
+    };
+    saveGeminiCache(cacheToSave);
+
+    // Auto-push disabled on purpose.
+    // Leave manual push only.
+    // await tryAutoPushGeminiResultToSheet(sourceText, result);
+
+    return result;
   }
 
-  function applyBaseAll(srcText) {
-    const tpl = matchTemplateSmart(srcText);
-    if (tpl) {
-      const out = {
-        da: translateRoundInText(tpl.da || "", "da"),
-        fi: translateRoundInText(tpl.fi || "", "fi"),
-        pt: translateRoundInText(tpl.pt || "", "pt"),
-        sv: translateRoundInText(tpl.sv || "", "sv"),
-        subtype: tpl.subtype || "",
+  async function translateSmart(srcText) {
+    const baseResult = applyBaseAll(srcText);
+    const baseChanged = countChangedTranslations(srcText, baseResult);
+
+    if (baseChanged >= 1) {
+      return {
+        ...baseResult,
+        mode: "base",
       };
-      if (!out.sv) out.sv = srcText;
-      return { mode: "tpl", out };
     }
 
-    const da = applyExactToText(srcText, "da");
-    const fi = applyExactToText(srcText, "fi");
-    const pt = applyExactToText(srcText, "pt");
-    let sv = applyExactToText(srcText, "sv");
-    if (!sv || norm(sv) === norm(srcText)) sv = srcText;
+    if (!refreshGeminiKey()) {
+      return {
+        ...baseResult,
+        mode: "base-no-match-no-key",
+      };
+    }
 
-    return { mode: "exact", out: { da, fi, pt, sv, subtype: "" } };
-  }
+    try {
+      const geminiResult = await translateWithGemini(srcText);
 
-  // ---------------- Import parser (supports Outcome header) ----------------
-  function parseTSVorCSV(text) {
-    const lines = (text || "")
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-    if (!lines.length) return { type: "none", rows: [] };
-
-    const delim = lines[0].includes("\t") ? "\t" : ",";
-    const rows = lines.map((l) => l.split(delim).map((c) => c.trim()));
-    const header = rows[0].map(norm);
-
-    const hasExact =
-      (header.includes("english") || header.includes("outcome")) &&
-      (header.includes("danish") || header.includes("dansk")) &&
-      (header.includes("finnish") || header.includes("suomi")) &&
-      (header.includes("portuguese") ||
-        header.includes("português") ||
-        header.includes("portugese"));
-
-    const hasMarket =
-      header.includes("market") &&
-      (header.includes("respective subtype") || header.includes("subtype")) &&
-      (header.includes("danish") || header.includes("dansk")) &&
-      (header.includes("finnish") || header.includes("suomi")) &&
-      (header.includes("portuguese") ||
-        header.includes("português") ||
-        header.includes("portugese"));
-
-    if (hasMarket) return { type: "market", rows, header: true };
-    if (hasExact) return { type: "exact", rows, header: true };
-
-    // no header: 5 columns exact (EN DA FI PT SV) or 6 market (Market Subtype DA FI PT SV)
-    const colCount = rows[0].length;
-    if (colCount >= 6) return { type: "market", rows, header: false };
-    if (colCount >= 5) return { type: "exact", rows, header: false };
-    if (colCount >= 4) return { type: "exact", rows, header: false }; // legacy without sv
-    return { type: "none", rows: [] };
-  }
-
-  function importData(text) {
-    const parsed = parseTSVorCSV(text);
-    if (parsed.type === "none") return { kind: "none" };
-
-    if (parsed.type === "exact") {
-      const start = parsed.header ? 1 : 0;
-      const rows = parsed.rows;
-      const header = parsed.header ? rows[0].map(norm) : [];
-      const idx = (name) => (parsed.header ? header.indexOf(norm(name)) : -1);
-
-      const userExact = loadUserExact();
-      let added = 0,
-        updated = 0;
-
-      for (let i = start; i < rows.length; i++) {
-        const r = rows[i];
-        if (r.length < 4) continue;
-
-        let en, da, fi, pt, sv;
-
-        if (parsed.header) {
-          // English can be "English" or "Outcome"
-          en = r[idx("english")];
-          if (!en) en = r[idx("outcome")];
-
-          da = r[idx("danish")] ?? r[idx("dansk")];
-          fi = r[idx("finnish")] ?? r[idx("suomi")];
-          pt =
-            r[idx("portuguese")] ?? r[idx("português")] ?? r[idx("portugese")];
-          sv = r[idx("swedish")] ?? r[idx("svenska")];
-        } else {
-          [en, da, fi, pt, sv] = r;
-        }
-
-        const key = norm(en);
-        if (!key) continue;
-
-        const existed = !!userExact[key];
-        userExact[key] = { da: da || "", fi: fi || "", pt: pt || "", sv: sv || "" };
-        if (existed) updated++;
-        else added++;
+      if (geminiResult && hasAnyTranslationChanged(srcText, geminiResult)) {
+        return geminiResult;
       }
 
-      saveUserExact(userExact);
-      rebuildExactIndex();
-      return { kind: "exact", added, updated, total: Object.keys(userExact).length };
+      return {
+        ...baseResult,
+        mode: "base-no-match-gemini-no-change",
+      };
+    } catch (err) {
+      console.warn("Gemini fallback failed:", err);
+      return {
+        ...baseResult,
+        mode: "base-no-match-gemini-failed",
+        error: err?.message || String(err || "Unknown Gemini error"),
+      };
     }
-
-    if (parsed.type === "market") {
-      const start = parsed.header ? 1 : 0;
-      const rows = parsed.rows;
-      const header = parsed.header ? rows[0].map(norm) : [];
-      const idx = (name) => (parsed.header ? header.indexOf(norm(name)) : -1);
-
-      const current = loadUserTemplates();
-      const byKey = new Map(current.map((t) => [norm(t.enTpl), t]));
-      let added = 0,
-        updated = 0;
-
-      for (let i = start; i < rows.length; i++) {
-        const r = rows[i];
-        if (r.length < 5) continue;
-
-        let enTpl, subtype, daTpl, fiTpl, ptTpl, svTpl;
-
-        if (parsed.header) {
-          enTpl = r[idx("market")];
-          subtype = r[idx("respective subtype")] ?? r[idx("subtype")] ?? "";
-          daTpl = r[idx("danish")] ?? r[idx("dansk")] ?? "";
-          fiTpl = r[idx("finnish")] ?? r[idx("suomi")] ?? "";
-          ptTpl =
-            r[idx("portuguese")] ??
-            r[idx("português")] ??
-            r[idx("portugese")] ??
-            "";
-          svTpl = r[idx("swedish")] ?? r[idx("svenska")] ?? "";
-        } else {
-          [enTpl, subtype, daTpl, fiTpl, ptTpl, svTpl] = r;
-        }
-
-        if (!enTpl) continue;
-
-        const key = norm(enTpl);
-        const obj = {
-          enTpl,
-          subtype: subtype || "",
-          daTpl: daTpl || "",
-          fiTpl: fiTpl || "",
-          ptTpl: ptTpl || "",
-          svTpl: svTpl || "",
-        };
-
-        const existed = byKey.has(key);
-        byKey.set(key, obj);
-        if (existed) updated++;
-        else added++;
-      }
-
-      const merged = Array.from(byKey.values());
-      saveUserTemplates(merged);
-      rebuildTemplateIndex();
-      return { kind: "market", added, updated, total: merged.length };
-    }
-
-    return { kind: "none" };
   }
 
-  // ---------------- UI ----------------
+  // =========================================================
+  // UI / STRUCTURE / FLOW
+  // =========================================================
   function ensureStyles() {
-    const ID = "tbo-translation-tool-style";
-    if (document.getElementById(ID)) return;
+    if (document.getElementById(PANEL_ID + "-style")) return;
     const style = document.createElement("style");
-    style.id = ID;
+    style.id = PANEL_ID + "-style";
     style.textContent = `
-      #${PANEL_ID} { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
+      #${PANEL_ID} { font-family: system-ui,-apple-system,sans-serif; box-sizing: border-box; }
       #${PANEL_ID} * { box-sizing: border-box; }
-      #${PANEL_ID} .tt-panel{
-        position: fixed;
-        top: 90px;
-        right: 24px;
-        width: 420px;
-        max-width: calc(100vw - 40px);
-        background: #13161D;
-        color: #E6E8EE;
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 16px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.45);
-        z-index: 999999;
-        overflow: hidden;
-      }
-      #${PANEL_ID} .tt-header{
-        display:flex;
-        align-items:center;
-        justify-content:space-between;
-        gap:10px;
-        padding: 10px 12px;
-        background: linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04));
-        border-bottom: 1px solid rgba(255,255,255,0.10);
-        cursor: move;
-        user-select: none;
-      }
-      #${PANEL_ID} .tt-title{
-        font-size: 13px;
-        font-weight: 650;
-        letter-spacing: .2px;
-      }
-      #${PANEL_ID} .tt-actions{
-        display:flex;
-        align-items:center;
-        gap: 8px;
-      }
-      #${PANEL_ID} .tt-iconbtn{
-        width: 28px;
-        height: 24px;
-        border-radius: 10px;
-        border: 1px solid rgba(255,255,255,0.10);
-        background: rgba(255,255,255,0.03);
-        color: rgba(230,232,238,0.9);
-        cursor: pointer;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font-weight: 750;
-        line-height: 1;
-      }
-      #${PANEL_ID} .tt-iconbtn:hover{
-        border-color: rgba(255,255,255,0.14);
-        background: rgba(255,255,255,0.05);
-      }
-
-      #${PANEL_ID} .tt-body{
-        padding: 12px;
-      }
-
-      #${PANEL_ID} .tt-section{
-        background: rgba(255,255,255,0.02);
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 14px;
-        padding: 10px;
-      }
-
-      #${PANEL_ID} .tt-sectiontitle{
-        font-size: 11px;
-        font-weight: 650;
-        color: rgba(230,232,238,0.70);
-        margin-bottom: 8px;
-      }
-
-      #${PANEL_ID} .tt-grid{
-        display:grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-      }
-
-      #${PANEL_ID} .tt-btn{
-        width: 100%;
-        border-radius: 12px;
-        padding: 10px 12px;
-        font-size: 12px;
-        font-weight: 650;
-        border: 1px solid rgba(255,255,255,0.10);
-        background: rgba(255,255,255,0.03);
-        color: #E6E8EE;
-        cursor: pointer;
-        user-select: none;
-        transition: transform 80ms ease, border-color 120ms ease, background 120ms ease;
-      }
-      #${PANEL_ID} .tt-btn:hover{
-        border-color: rgba(255,255,255,0.14);
-        background: rgba(255,255,255,0.05);
-      }
-      #${PANEL_ID} .tt-btn:active{ transform: translateY(1px); }
-
-      #${PANEL_ID} .tt-btnprimary{
-        border: 1px solid rgba(255,255,255,0.10);
-        color: #111;
-        background: linear-gradient(
-          180deg,
-          rgba(240,166,74,0.95) 0%,
-          rgba(200,133,51,0.95) 100%
-        );
-      }
-      #${PANEL_ID} .tt-btnprimary:hover{ filter: brightness(1.02); }
-
-      #${PANEL_ID} .tt-status{
-        margin-top: 10px;
-        font-size: 11px;
-        line-height: 1.35;
-        padding: 10px;
-        border-radius: 14px;
-        background: rgba(255,255,255,0.02);
-        border: 1px solid rgba(255,255,255,0.10);
-        color: rgba(230,232,238,0.75);
-        white-space: pre-wrap;
-        min-height: 56px;
-      }
-
-      #${PANEL_ID} .tt-status.empty{
-        min-height: 0;
-        padding: 0;
-        border: none;
-        background: transparent;
-      }
+      #${PANEL_ID} .tt-panel{ position: fixed; top: 90px; right: 24px; width: 300px; background: #13161D; color: #E6E8EE; border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.45); z-index: 999999; }
+      #${PANEL_ID} .tt-header{ display:flex; align-items:center; justify-content:space-between; padding: 10px; background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.10); cursor: move; user-select: none; }
+      #${PANEL_ID} .tt-title{ font-size: 13px; font-weight: 600; cursor: pointer; }
+      #${PANEL_ID} .tt-actions{ display:flex; gap: 4px; }
+      #${PANEL_ID} .tt-iconbtn{ width: 26px; height: 26px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: #E6E8EE; cursor: pointer; font-weight: bold; font-size: 13px;}
+      #${PANEL_ID} .tt-iconbtn:hover{ background: rgba(255,255,255,0.1); }
+      #${PANEL_ID} .tt-body{ padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+      #${PANEL_ID} .tt-btn{ width: 100%; border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600; border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.03); color: #E6E8EE; cursor: pointer; transition: 0.1s; }
+      #${PANEL_ID} .tt-btn:hover{ background: rgba(255,255,255,0.08); }
+      #${PANEL_ID} .tt-btnprimary{ color: #111; background: linear-gradient(180deg, rgba(240,166,74,0.95) 0%, rgba(200,133,51,0.95) 100%); border: none; }
+      #${PANEL_ID} .tt-btnprimary:hover{ filter: brightness(1.1); }
+      #${PANEL_ID} .tt-btnadmin{ color: white; background: #b91c1c; border: none; display: none; }
+      #${PANEL_ID} .tt-status{ font-size: 11px; padding: 8px; border-radius: 8px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.10); color: #aaa; white-space: pre-wrap; display: none; }
     `;
     document.head.appendChild(style);
   }
 
   function openPanel() {
-    // Prevent duplicates
-    const existing = document.getElementById(PANEL_ID);
-    if (existing) {
-      existing.style.display = "block";
-      return existing;
+    if (document.getElementById(PANEL_ID)) {
+      document.getElementById(PANEL_ID).style.display = "block";
+      return;
     }
 
     ensureStyles();
@@ -779,21 +1090,98 @@
     title.className = "tt-title";
     title.textContent = "Translation Tool";
 
+    let iaClickCount = 0;
+    let iaTimer = null;
+
     const headerActions = document.createElement("div");
     headerActions.className = "tt-actions";
 
+    const btnSync = document.createElement("button");
+    btnSync.className = "tt-iconbtn";
+    btnSync.textContent = "🔄";
+    btnSync.title = "Sync with Database";
+
     const btnMin = document.createElement("button");
     btnMin.className = "tt-iconbtn";
-    btnMin.title = "Minimize";
-    btnMin.type = "button";
     btnMin.textContent = "–";
 
     const btnX = document.createElement("button");
     btnX.className = "tt-iconbtn";
-    btnX.title = "Close";
-    btnX.type = "button";
     btnX.textContent = "×";
 
+    const bPush = document.createElement("button");
+    bPush.className = "tt-btn tt-btnadmin";
+    bPush.textContent = "Push to Database";
+
+    let statusEl = document.createElement("div");
+    statusEl.className = "tt-status";
+    const setStatus = (msg) => {
+      statusEl.textContent = msg;
+      statusEl.style.display = msg ? "block" : "none";
+    };
+
+    title.addEventListener("click", () => {
+      iaClickCount++;
+      clearTimeout(iaTimer);
+
+      if (iaClickCount >= 4) {
+        iaClickCount = 0;
+        const newKey = prompt("🔧 AI MODE\nEnter Gemini API Key:", "");
+        if (newKey !== null) {
+          GEMINI_KEY = newKey.trim() || null;
+          setStatus(GEMINI_KEY ? "API Key loaded for this session." : "API Key cleared.");
+        }
+      } else {
+        iaTimer = setTimeout(() => {
+          iaClickCount = 0;
+        }, 1200);
+      }
+    });
+
+    let popupWindow = null;
+
+    if (!window._tboListener) {
+      window.addEventListener("message", (e) => {
+        if (e.data && e.data.source === "tbo-translation") {
+          if (popupWindow && !popupWindow.closed) {
+            popupWindow.close();
+            popupWindow = null;
+          }
+
+          if (e.data.action === "sync") {
+            buildIndexFromSheet(e.data.data);
+            setStatus(`✅ Sync Complete: ${EXACT_MAP.size} terms loaded.`);
+          }
+
+          if (e.data.action === "add") {
+            setStatus("✅ Term pushed to Cloud Database.");
+          }
+        }
+      });
+      window._tboListener = true;
+    }
+
+    let adminClickCount = 0;
+    let adminTimer = null;
+
+    btnMin.addEventListener("click", () => {
+      adminClickCount++;
+      clearTimeout(adminTimer);
+
+      if (adminClickCount >= 4) {
+        adminClickCount = 0;
+        const isHidden = bPush.style.display === "none" || bPush.style.display === "";
+        bPush.style.display = isHidden ? "block" : "none";
+      } else {
+        adminTimer = setTimeout(() => {
+          adminClickCount = 0;
+          const body = document.querySelector(`#${PANEL_ID} .tt-body`);
+          body.style.display = body.style.display === "none" ? "flex" : "none";
+        }, 400);
+      }
+    });
+
+    headerActions.appendChild(btnSync);
     headerActions.appendChild(btnMin);
     headerActions.appendChild(btnX);
 
@@ -803,237 +1191,175 @@
     const body = document.createElement("div");
     body.className = "tt-body";
 
-    // Actions section
-    const sec = document.createElement("div");
-    sec.className = "tt-section";
+    const bAuto = document.createElement("button");
+    bAuto.className = "tt-btn tt-btnprimary";
+    bAuto.textContent = "Translate";
 
-    const secTitle = document.createElement("div");
-    secTitle.className = "tt-sectiontitle";
-    secTitle.textContent = "Actions";
+    // ---------------------------------------------------------
+    // BOTONES
+    // ---------------------------------------------------------
+    btnSync.onclick = () => {
+      setStatus("Syncing...");
+      if (popupWindow && !popupWindow.closed) popupWindow.close();
+      popupWindow = window.open(SHEET_URL, "tbo_sync", "width=400,height=300,left=200,top=200");
+    };
 
-    const grid = document.createElement("div");
-    grid.className = "tt-grid";
+    bAuto.onclick = async () => {
+      const row = await waitFor(
+        '[data-testid*="multilanguage-translations-popup"][data-testid*="row"]',
+        15,
+        100
+      );
+      if (!row) return setStatus("Modal not found. Please open it first.");
 
-    const bImport = document.createElement("button");
-    bImport.className = "tt-btn";
-    bImport.type = "button";
-    bImport.textContent = "Import base";
+      const fields = getModalFields();
+      if (!fields?.en) return setStatus("English field not found in TBO.");
 
-    const bLoad = document.createElement("button");
-    bLoad.className = "tt-btn";
-    bLoad.type = "button";
-    bLoad.textContent = "Load from modal";
+      const enText = (fields.en.value || "").trim();
+      if (!enText) return setStatus("English field is empty.");
 
-    const bAll = document.createElement("button");
-    bAll.className = "tt-btn tt-btnprimary";
-    bAll.type = "button";
-    bAll.textContent = "All (Base)";
+      setStatus("Translating...");
 
-    const bInsert = document.createElement("button");
-    bInsert.className = "tt-btn";
-    bInsert.type = "button";
-    bInsert.textContent = "Insert into modal";
+      const result = await translateSmart(enText);
 
-    grid.appendChild(bImport);
-    grid.appendChild(bLoad);
-    grid.appendChild(bAll);
-    grid.appendChild(bInsert);
+      const builtStore = buildStoredValues(enText, result);
 
-    sec.appendChild(secTitle);
-    sec.appendChild(grid);
+      LAST_TRANSLATION_CONTEXT = {
+        rawSource: enText,
+        changedIndexes: builtStore.changedIndexes,
+        storedValues: builtStore.storedValues,
+        result,
+      };
 
-    // Status (empty by default)
-    const statusEl = document.createElement("div");
-    statusEl.className = "tt-status empty";
-    statusEl.textContent = "";
+      setNativeValue(fields.da, result.da || "");
+      setNativeValue(fields.fi, result.fi || "");
+      setNativeValue(fields.pt, result.pt || "");
+      if (fields.sv) setNativeValue(fields.sv, result.sv || enText);
+      if (fields.fr) setNativeValue(fields.fr, result.fr || enText);
 
-    body.appendChild(sec);
+      if (result.error) {
+        setStatus(`⚠️ ${result.mode}: ${result.error}`);
+      } else {
+        setStatus(
+          `✅ Translated (${result.mode}${result._cached ? " / cache" : ""}): ${builtStore.storedValues.en}`
+        );
+      }
+    };
+
+    bPush.onclick = () => {
+      const fields = getModalFields();
+      const enText = fields?.en ? (fields.en.value || "").trim() : "";
+      if (!enText) return setStatus("⚠️ No English term found to push.");
+
+      const daTextFull = fields?.da ? (fields.da.value || "").trim() : "";
+      const fiTextFull = fields?.fi ? (fields.fi.value || "").trim() : "";
+      const ptTextFull = fields?.pt ? (fields.pt.value || "").trim() : "";
+      const svTextFull = fields?.sv ? (fields.sv.value || "").trim() : "";
+      const frTextFull = fields?.fr ? (fields.fr.value || "").trim() : "";
+
+      const useStoredSource =
+        LAST_TRANSLATION_CONTEXT?.rawSource &&
+        norm(normalizeDashSpacing(LAST_TRANSLATION_CONTEXT.rawSource)) === norm(normalizeDashSpacing(enText)) &&
+        LAST_TRANSLATION_CONTEXT?.storedValues;
+
+      const enToStore = useStoredSource
+        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.en)
+        : sanitizeGeminiText(enText);
+
+      const daToStore = useStoredSource
+        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.da)
+        : sanitizeGeminiText(daTextFull);
+
+      const fiToStore = useStoredSource
+        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.fi)
+        : sanitizeGeminiText(fiTextFull);
+
+      const ptToStore = useStoredSource
+        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.pt)
+        : sanitizeGeminiText(ptTextFull);
+
+      const svToStore = useStoredSource
+        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.sv)
+        : sanitizeGeminiText(svTextFull);
+
+      const frToStore = useStoredSource
+        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.fr)
+        : sanitizeGeminiText(frTextFull);
+
+      if (!enToStore) {
+        return setStatus("⚠️ No valid sourceToStore found to push.");
+      }
+
+      setStatus(`Pushing: ${enToStore}`);
+      if (popupWindow && !popupWindow.closed) popupWindow.close();
+
+      const queryParams =
+        `?action=add` +
+        `&en=${encodeURIComponent(enToStore)}` +
+        `&da=${encodeURIComponent(daToStore)}` +
+        `&fi=${encodeURIComponent(fiToStore)}` +
+        `&pt=${encodeURIComponent(ptToStore)}` +
+        `&sv=${encodeURIComponent(svToStore)}` +
+        `&fr=${encodeURIComponent(frToStore)}`;
+
+      popupWindow = window.open(
+        SHEET_URL + queryParams,
+        "tbo_push",
+        "width=400,height=300,left=200,top=200"
+      );
+    };
+
+    btnX.onclick = () => {
+      clearGeminiKey();
+      root.remove();
+    };
+
+    let dragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    header.addEventListener("mousedown", (e) => {
+      if (e.target.tagName === "BUTTON" || e.target === title) return;
+      dragging = true;
+      const rect = panel.getBoundingClientRect();
+      offsetX = e.clientX - rect.left;
+      offsetY = e.clientY - rect.top;
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      panel.style.left = `${Math.max(0, e.clientX - offsetX)}px`;
+      panel.style.top = `${Math.max(0, e.clientY - offsetY)}px`;
+    });
+
+    window.addEventListener("mouseup", () => {
+      dragging = false;
+    });
+
+    body.appendChild(bAuto);
+    body.appendChild(bPush);
     body.appendChild(statusEl);
 
     panel.appendChild(header);
     panel.appendChild(body);
     root.appendChild(panel);
     document.body.appendChild(root);
-
-    // Restore position
-    try {
-      const saved = JSON.parse(localStorage.getItem(POS_KEY) || "null");
-      if (saved && typeof saved.x === "number" && typeof saved.y === "number") {
-        panel.style.left = `${saved.x}px`;
-        panel.style.top = `${saved.y}px`;
-        panel.style.right = "auto";
-      }
-    } catch {}
-
-    // Drag
-    let dragging = false,
-      offsetX = 0,
-      offsetY = 0;
-
-    header.addEventListener("mousedown", (e) => {
-      // allow clicks on header buttons without dragging
-      const t = e.target;
-      if (t && (t === btnMin || t === btnX)) return;
-
-      dragging = true;
-      const rect = panel.getBoundingClientRect();
-      offsetX = e.clientX - rect.left;
-      offsetY = e.clientY - rect.top;
-      e.preventDefault();
-    });
-
-    window.addEventListener("mousemove", (e) => {
-      if (!dragging) return;
-      const x = Math.max(
-        0,
-        Math.min(window.innerWidth - panel.offsetWidth, e.clientX - offsetX)
-      );
-      const y = Math.max(
-        0,
-        Math.min(window.innerHeight - 40, e.clientY - offsetY)
-      );
-      panel.style.left = `${x}px`;
-      panel.style.top = `${y}px`;
-      panel.style.right = "auto";
-    });
-
-    window.addEventListener("mouseup", () => {
-      if (!dragging) return;
-      dragging = false;
-      try {
-        const rect = panel.getBoundingClientRect();
-        localStorage.setItem(POS_KEY, JSON.stringify({ x: rect.left, y: rect.top }));
-      } catch {}
-    });
-
-    // Minimize
-    let minimized = false;
-    btnMin.onclick = () => {
-      minimized = !minimized;
-      body.style.display = minimized ? "none" : "block";
-      btnMin.textContent = minimized ? "▢" : "–";
-    };
-
-    // Close
-    btnX.onclick = () => root.remove();
-
-    // Status helpers
-    const setStatus = (msg) => {
-      const t = String(msg || "");
-      statusEl.textContent = t;
-      if (!t.trim()) statusEl.classList.add("empty");
-      else statusEl.classList.remove("empty");
-    };
-
-    // State
-    let lastFields = null;
-    let lastEnglish = "";
-    let lastOut = null;
-
-    // Buttons
-    bImport.onclick = () => {
-      const example =
-        `Outcome\tDanish\tFinnish\tPortuguese\tSwedish\n` +
-        `1st Quarter\t1. Fjerdedel\t1. Neljännes\t1º Quadrante\t1:a kvartalet\n\n` +
-        `English\tDanish\tFinnish\tPortuguese\tSwedish\n` +
-        `Yes\tJa\tKyllä\tSim\tJa\n\n` +
-        `Market\tRespective Subtype\tDanish\tFinnish\tPortuguese\tSwedish\n` +
-        `Tournament X - Finalists\tFinalist\tTournament X - Finalister\tTournament X - Finalistit\tTournament X - Finalistas\tTournament X - Finalister`;
-
-      const txt = prompt(
-        "Paste TSV/CSV copied from Google Sheets/Excel.\n\nExample:\n" + example,
-        ""
-      );
-      if (!txt) return setStatus("Import cancelled.");
-
-      const res = importData(txt);
-      if (res.kind === "none") return setStatus("Could not detect format. Paste TSV/CSV with full columns.");
-      setStatus("Import OK:\n" + JSON.stringify(res, null, 2));
-    };
-
-    bLoad.onclick = async () => {
-      setStatus("...");
-      const anyRow = await waitFor(
-        '[data-testid*="multilanguage-translations-popup"][data-testid*="row"]'
-      );
-      if (!anyRow) return setStatus("Modal not found. Open it and retry.");
-
-      const fields = getModalFields();
-      if (!fieldsArePresent(fields)) return setStatus("Could not map EN/DA/FI/PT/SV in the modal.");
-
-      lastFields = fields;
-      lastEnglish = (fields.en.value || "").trim();
-      setStatus("Loaded from modal." + (lastEnglish ? `\nEN: ${lastEnglish}` : ""));
-    };
-
-    bAll.onclick = async () => {
-      if (!lastFields) {
-        const anyRow = await waitFor(
-          '[data-testid*="multilanguage-translations-popup"][data-testid*="row"]',
-          10,
-          100
-        );
-        if (!anyRow) return setStatus("Modal not found. Open it and retry.");
-        const fields = getModalFields();
-        if (!fieldsArePresent(fields)) return setStatus("Could not map EN/DA/FI/PT/SV in the modal.");
-        lastFields = fields;
-        lastEnglish = (fields.en.value || "").trim();
-      }
-
-      if (!lastEnglish) lastEnglish = (lastFields.en.value || "").trim();
-      if (!lastEnglish) return setStatus("EN is empty.");
-
-      const res = applyBaseAll(lastEnglish);
-      lastOut = res.out;
-
-      setStatus(
-        "Translation ready (Base). Click Insert into modal.\n" +
-          `DA: ${lastOut.da}\n` +
-          `FI: ${lastOut.fi}\n` +
-          `PT: ${lastOut.pt}\n` +
-          `SV: ${lastOut.sv}`
-      );
-    };
-
-    bInsert.onclick = async () => {
-      const anyRow = await waitFor(
-        '[data-testid*="multilanguage-translations-popup"][data-testid*="row"]',
-        10,
-        100
-      );
-      if (!anyRow) return setStatus("Modal not found. Open it and retry.");
-
-      const fields = getModalFields();
-      if (!fieldsArePresent(fields)) return setStatus("Could not map EN/DA/FI/PT/SV in the modal.");
-
-      if (!lastOut) {
-        const en = (fields.en.value || "").trim();
-        if (!en) return setStatus("EN is empty.");
-        lastOut = applyBaseAll(en).out;
-      }
-
-      setNativeValue(fields.da, lastOut.da ?? "");
-      setNativeValue(fields.fi, lastOut.fi ?? "");
-      setNativeValue(fields.pt, lastOut.pt ?? "");
-      if (fields.sv) setNativeValue(fields.sv, lastOut.sv ?? (fields.en.value || ""));
-
-      setStatus("Inserted into the modal. Now press Save.");
-    };
-
-    // Start empty
-    setStatus("");
-
-    return root;
   }
 
-  // ---------------- Register automation (NO auto-open) ----------------
-  window.registerAutomation("translationTool", { name: "Translation Tool" }, async () => {
-    try {
-      openPanel();
-      return { ok: true };
-    } catch (err) {
-      console.error("[translationTool] Error:", err);
-      return { ok: false, error: err?.message ? String(err.message) : String(err) };
-    }
-  });
+  if (!window.registerAutomation) {
+    openPanel();
+  } else {
+    window.registerAutomation(
+      "translationTool",
+      { name: "Translation Tool" },
+      async () => {
+        try {
+          openPanel();
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: String(err) };
+        }
+      }
+    );
+  }
 })();
