@@ -1,10 +1,10 @@
-// translationsAssistant.js
+// GolfTranslations.js
 (() => {
   if (!window.registerAutomation) return;
 
   window.registerAutomation(
-    "translationsAssistant",
-    { name: "Translations Assistant" },
+    "GolfTranslations",
+    { name: "Golf Translations" },
     async () => {
       try {
         // =========================
