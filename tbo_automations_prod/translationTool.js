@@ -1,5 +1,6 @@
 // translationTool.js
 // Base-driven translations with Gemini fallback
+// Final fix: case-insensitive template tokens + safe long-market template matching
 (() => {
   const PANEL_ID = "tbo-translation-tool";
   const CACHE_KEY = "tbo_translations_cache_v10";
@@ -11,7 +12,48 @@
     "https://script.google.com/a/macros/leovegas.com/s/AKfycbwCS3E0zXO7XrHjPRUUotGSZchQgm3leZuROFg9irBFeePBtXj14WwTbL1PxsydmtBiXg/exec";
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const norm = (s) => (s || "").trim().toLowerCase();
+
+  function stripAccents(s) {
+    return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
+
+  const norm = (s) => stripAccents(s || "").trim().toLowerCase();
+
+  const LANGUAGE_ALIASES = {
+    en_CA: ["canadian english", "canada english", "english canada", "english (canada)", "english - canada", "en-ca", "en_ca"],
+    en: ["english", "ingles", "inglés"],
+    da: ["danish", "dansk"],
+    fi: ["finnish", "suomi"],
+    fr: ["french", "francais", "français"],
+    pt: ["portuguese", "portugues", "português", "portoguese"],
+    sv: ["swedish", "svenska", "swdish"],
+  };
+
+  const SOURCE_LANG = "en";
+  const GEMINI_LANGS = ["da", "fi", "pt", "sv", "fr"];
+  let SHEET_LANG_KEYS = new Set(["da", "fi", "pt", "sv", "fr"]);
+
+  function detectLanguageKey(labelText) {
+    const text = norm(labelText);
+    if (!text) return null;
+
+    const orderedKeys = Object.keys(LANGUAGE_ALIASES).sort((a, b) => {
+      const longestA = Math.max(...LANGUAGE_ALIASES[a].map((x) => norm(x).length));
+      const longestB = Math.max(...LANGUAGE_ALIASES[b].map((x) => norm(x).length));
+      return longestB - longestA;
+    });
+
+    for (const langKey of orderedKeys) {
+      const aliases = LANGUAGE_ALIASES[langKey] || [];
+      if (aliases.some((alias) => text.includes(norm(alias)))) return langKey;
+    }
+
+    return null;
+  }
+
+  function getTranslationLangKeys() {
+    return Array.from(new Set([...SHEET_LANG_KEYS, ...GEMINI_LANGS])).filter((lang) => lang !== SOURCE_LANG);
+  }
 
   let GEMINI_KEY = null;
   let lastGeminiAt = 0;
@@ -41,32 +83,25 @@
   function detectLangFromRow(row) {
     const clone = row.cloneNode(true);
     clone.querySelectorAll("input, textarea").forEach((el) => el.remove());
-    const txt = norm(clone.textContent || "");
-    if (txt.includes("english") || txt.includes("inglés")) return "en";
-    if (txt.includes("danish") || txt.includes("dansk")) return "da";
-    if (txt.includes("finnish") || txt.includes("suomi")) return "fi";
-    if (txt.includes("portuguese") || txt.includes("português") || txt.includes("portugues")) return "pt";
-    if (txt.includes("swedish") || txt.includes("svenska")) return "sv";
-    if (txt.includes("french") || txt.includes("français")) return "fr";
-    return null;
+    return detectLanguageKey(clone.textContent || "");
   }
 
   function getModalFields() {
     const rows = Array.from(
       document.querySelectorAll('[data-testid*="multilanguage-translations-popup"][data-testid*="row"]')
     );
-    const map = { en: null, da: null, fi: null, pt: null, sv: null, fr: null };
+
+    const map = {};
+
     for (const row of rows) {
       const lang = detectLangFromRow(row);
       const input = row.querySelector("input, textarea");
       if (lang && input) map[lang] = input;
     }
+
     return map;
   }
 
-  // =========================================================
-  // DATA INDEX (BASE)
-  // =========================================================
   let EXACT_MAP = new Map();
   let EXACT_KEYS_BY_LEN = [];
   let TEMPLATE_LIST = [];
@@ -82,12 +117,8 @@
     return normalizeText(String(text || "").replace(/\s*[-–]\s*/g, " - "));
   }
 
-  // Lookup key ONLY for base matching.
-  // This does NOT modify the original TBO text shown in the modal.
   function getLookupKey(text) {
-    return normalizeDashSpacing(String(text || ""))
-      .trim()
-      .toLowerCase();
+    return normalizeDashSpacing(String(text || "")).trim().toLowerCase();
   }
 
   function rebuildExactIndexFromObject(obj) {
@@ -96,57 +127,89 @@
   }
 
   const TOKEN_DEFS = [
-    { token: "Tournament X", placeholder: "@@TOK_TOURNAMENT_X@@", pattern: ".+?" },
-    { token: "Player X", placeholder: "@@TOK_PLAYER_X@@", pattern: ".+?" },
-    { token: "Player Y", placeholder: "@@TOK_PLAYER_Y@@", pattern: ".+?" },
-    { token: "Team X", placeholder: "@@TOK_TEAM_X@@", pattern: ".+?" },
-    { token: "Team Y", placeholder: "@@TOK_TEAM_Y@@", pattern: ".+?" },
-    { token: "xth", placeholder: "@@TOK_XTH@@", pattern: "\\d+(?:st|nd|rd|th)?" },
-    { token: "X", placeholder: "@@TOK_X@@", pattern: ".+?" },
+    { token: "Tournament X", key: "tournament_x", pattern: ".+?" },
+    { token: "Tournament Y", key: "tournament_y", pattern: ".+?" },
+    { token: "Competition X", key: "competition_x", pattern: ".+?" },
+    { token: "Competition Y", key: "competition_y", pattern: ".+?" },
+    { token: "Player X", key: "player_x", pattern: ".+?" },
+    { token: "Player Y", key: "player_y", pattern: ".+?" },
+    { token: "Team X", key: "team_x", pattern: ".+?" },
+    { token: "Team Y", key: "team_y", pattern: ".+?" },
+    { token: "Stage X", key: "stage_x", pattern: "\\d+(?:st|nd|rd|th)?|.+?" },
+    { token: "Round X", key: "round_x", pattern: "\\d+(?:st|nd|rd|th)?|.+?" },
+    { token: "Quarter X", key: "quarter_x", pattern: "\\d+(?:st|nd|rd|th)?|.+?" },
+    { token: "Set X", key: "set_x", pattern: "\\d+(?:st|nd|rd|th)?|.+?" },
+    { token: "Map X", key: "map_x", pattern: "\\d+(?:st|nd|rd|th)?|.+?" },
+    { token: "Selection X", key: "selection_x", pattern: ".+?" },
+    { token: "Market X", key: "market_x", pattern: ".+?" },
+    { token: "Number X", key: "number_x", pattern: "\\d+(?:\\.\\d+)?" },
+    { token: "xth", key: "xth", pattern: "\\d+(?:st|nd|rd|th)?" },
+
+    // Legacy fallback. Keep last. Avoid using this in new templates.
+    { token: "X", key: "generic_x", pattern: ".+?", legacy: true },
   ].sort((a, b) => b.token.length - a.token.length);
 
   function hasTemplateToken(text) {
-    const s = String(text || "");
-    return TOKEN_DEFS.some((t) => s.includes(t.token));
+    const s = String(text || "").toLowerCase();
+    return TOKEN_DEFS.some((t) => s.includes(String(t.token).toLowerCase()));
   }
 
-  function compileTemplate(enTpl) {
-    let raw = normalizeDashSpacing(enTpl);
-    const seq = [];
-    const counters = Object.create(null);
+  function findNextTokenOccurrence(text, fromIndex) {
+    const lower = String(text || "").toLowerCase();
+    let best = null;
 
     for (const def of TOKEN_DEFS) {
-      const parts = raw.split(def.token);
-      if (parts.length === 1) continue;
+      const tokenLower = String(def.token).toLowerCase();
+      const idx = lower.indexOf(tokenLower, fromIndex);
+      if (idx < 0) continue;
 
-      raw = parts[0];
-      for (let i = 1; i < parts.length; i++) {
-        counters[def.token] = (counters[def.token] || 0) + 1;
-        const groupName = `${def.placeholder
-          .replace(/@/g, "")
-          .replace(/TOK_/g, "")
-          .replace(/_+/g, "_")
-          .toLowerCase()}_${counters[def.token]}`;
-
-        raw += `${def.placeholder}${groupName}${def.placeholder}` + parts[i];
-        seq.push({
-          token: def.token,
-          groupName,
-          pattern: def.pattern,
-        });
+      if (!best || idx < best.index || (idx === best.index && def.token.length > best.def.token.length)) {
+        best = { index: idx, def };
       }
     }
 
-    let pattern = escapeRegExp(raw);
-    pattern = pattern.replace(/\s*\\-\s*/g, "\\s*[-–]\\s*");
+    return best;
+  }
 
-    for (const item of seq) {
-      const def = TOKEN_DEFS.find((t) => t.token === item.token);
-      if (!def) continue;
+  function compileTemplate(enTpl) {
+    const raw = normalizeDashSpacing(enTpl);
+    const seq = [];
+    const counters = Object.create(null);
 
-      const marker = escapeRegExp(`${def.placeholder}${item.groupName}${def.placeholder}`);
-      pattern = pattern.replace(new RegExp(marker), `(?<${item.groupName}>${item.pattern})`);
+    let cursor = 0;
+    let pattern = "";
+
+    while (cursor < raw.length) {
+      const found = findNextTokenOccurrence(raw, cursor);
+
+      if (!found) {
+        pattern += escapeRegExp(raw.slice(cursor));
+        break;
+      }
+
+      if (found.index > cursor) {
+        pattern += escapeRegExp(raw.slice(cursor, found.index));
+      }
+
+      const def = found.def;
+      counters[def.key] = (counters[def.key] || 0) + 1;
+      const groupName = `${def.key}_${counters[def.key]}`;
+
+      pattern += `(?<${groupName}>${def.pattern})`;
+
+      seq.push({
+        token: def.token,
+        key: def.key,
+        groupName,
+        pattern: def.pattern,
+      });
+
+      cursor = found.index + def.token.length;
     }
+
+    pattern = pattern.replace(/\\ /g, "\\s+");
+    pattern = pattern.replace(/\\-+/g, "[-–]");
+    pattern = pattern.replace(/\\s\+[-–]\\s\+/g, "\\s*[-–]\\s*");
 
     return {
       re: new RegExp(`^${pattern}$`, "i"),
@@ -160,7 +223,10 @@
     for (const item of seq) {
       const val = groups?.[item.groupName];
       if (val == null) continue;
-      out = out.replace(item.token, String(val));
+
+      // Replace Tournament X / tournament x / PLAYER X etc.
+      const re = new RegExp(escapeRegExp(item.token), "gi");
+      out = out.replace(re, String(val));
     }
 
     return out;
@@ -177,11 +243,7 @@
 
       TEMPLATE_LIST.push({
         en,
-        da: trObj?.da || "",
-        fi: trObj?.fi || "",
-        pt: trObj?.pt || "",
-        sv: trObj?.sv || "",
-        fr: trObj?.fr || "",
+        ...(trObj || {}),
         _re: compiled.re,
         _seq: compiled.seq,
       });
@@ -199,33 +261,65 @@
     const out = {};
     if (!rows || rows.length < 2) return;
 
-    const header = rows[0].map(norm);
-    const idx = (name) => header.indexOf(name);
+    const header = rows[0] || [];
+    const headerLangByIndex = {};
+
+    for (let c = 0; c < header.length; c++) {
+      const lang = detectLanguageKey(header[c]);
+      if (lang) headerLangByIndex[c] = lang;
+    }
+
+    const sourceIndex = Object.entries(headerLangByIndex).find(([, lang]) => lang === SOURCE_LANG)?.[0];
+
+    if (sourceIndex == null) {
+      throw new Error("English column not found in Google Sheet.");
+    }
+
+    SHEET_LANG_KEYS = new Set(Object.values(headerLangByIndex).filter((lang) => lang && lang !== SOURCE_LANG));
 
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i];
       if (!r || r.length < 2) continue;
 
-      const en = r[idx("english")];
+      const en = r[Number(sourceIndex)];
       if (!en) continue;
 
-      out[getLookupKey(en)] = {
-        da: r[idx("danish")] || "",
-        fi: r[idx("finnish")] || "",
-        pt: r[idx("portuguese")] || "",
-        sv: r[idx("swedish")] || "",
-        fr: r[idx("french")] || "",
-      };
+      const translations = {};
+
+      for (const [colIndex, lang] of Object.entries(headerLangByIndex)) {
+        if (!lang || lang === SOURCE_LANG) continue;
+        translations[lang] = r[Number(colIndex)] || "";
+      }
+
+      out[getLookupKey(en)] = translations;
     }
 
-    localStorage.setItem(CACHE_KEY, JSON.stringify(out));
+    localStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify({
+        _meta: {
+          sheetLangKeys: Array.from(SHEET_LANG_KEYS),
+          savedAt: Date.now(),
+        },
+        rows: out,
+      })
+    );
+
     rebuildAllIndexesFromObject(out);
   }
 
   function loadFromCache() {
     try {
       const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
-      rebuildAllIndexesFromObject(cached);
+
+      if (cached?.rows && typeof cached.rows === "object") {
+        SHEET_LANG_KEYS = new Set(cached?._meta?.sheetLangKeys || ["da", "fi", "pt", "sv", "fr"]);
+        rebuildAllIndexesFromObject(cached.rows);
+        return;
+      }
+
+      SHEET_LANG_KEYS = new Set(["da", "fi", "pt", "sv", "fr"]);
+      rebuildAllIndexesFromObject(cached || {});
     } catch {
       rebuildAllIndexesFromObject({});
     }
@@ -233,14 +327,12 @@
 
   loadFromCache();
 
-  // =========================================================
-  // LAST TRANSLATION CONTEXT / SOURCE TO STORE
-  // =========================================================
   let LAST_TRANSLATION_CONTEXT = {
     rawSource: "",
     changedIndexes: [],
     storedValues: {
       en: "",
+      en_CA: "",
       da: "",
       fi: "",
       pt: "",
@@ -271,7 +363,7 @@
     const originalParts = splitMarketParts(original);
     if (!originalParts.length) return [];
 
-    const langs = ["da", "fi", "pt", "sv", "fr"];
+    const langs = getTranslationLangKeys();
     const changedIndexes = [];
 
     for (let i = 0; i < originalParts.length; i++) {
@@ -308,39 +400,22 @@
     if (!indexes?.length) return clean;
 
     const picked = indexes.map((i) => parts[i]).filter(Boolean);
-
     return picked.length ? picked.join(" - ") : clean;
   }
 
   function buildStoredValues(originalText, result) {
     const changedIndexes = detectChangedIndexes(originalText, result);
+    const storedValues = { en: pickPartsByIndexes(originalText, changedIndexes) };
 
-    const storedValues = {
-      en: pickPartsByIndexes(originalText, changedIndexes),
-      da: pickPartsByIndexes(result?.da || "", changedIndexes),
-      fi: pickPartsByIndexes(result?.fi || "", changedIndexes),
-      pt: pickPartsByIndexes(result?.pt || "", changedIndexes),
-      sv: pickPartsByIndexes(result?.sv || "", changedIndexes),
-      fr: pickPartsByIndexes(result?.fr || "", changedIndexes),
-    };
+    for (const lang of getTranslationLangKeys()) {
+      storedValues[lang] = pickPartsByIndexes(result?.[lang] || "", changedIndexes);
+    }
 
-    return {
-      changedIndexes,
-      storedValues,
-    };
+    return { changedIndexes, storedValues };
   }
 
-  // =========================================================
-  // GENERIC BASE-DRIVEN LOGIC
-  // =========================================================
-
   function getSwedishOrdinalWord(n) {
-    const map = {
-      1: "Första",
-      2: "Andra",
-      3: "Tredje",
-      4: "Fjärde",
-    };
+    const map = { 1: "Första", 2: "Andra", 3: "Tredje", 4: "Fjärde" };
     return map[n] || `${n}:e`;
   }
 
@@ -361,88 +436,60 @@
 
     const k = String(kind || "").toLowerCase();
 
-    // -------------------------
-    // QUARTER
-    // -------------------------
     if (k === "quarter") {
       if (lang === "da") return `${n}. Fjerdedel`;
       if (lang === "fi") return `${n}. Neljännes`;
       if (lang === "pt") return `${n}º Quadrante`;
       if (lang === "sv") return `${getSwedishOrdinalWord(n)} kvarten`;
       if (lang === "fr") return `${getFrenchQuarterOrdinal(n)} Quart`;
-      return null;
     }
 
-    // -------------------------
-    // ROUND
-    // -------------------------
     if (k === "round") {
       if (lang === "da") return `${n}. runde`;
       if (lang === "fi") return `${n}. kierros`;
       if (lang === "pt") return `${n}ª Rodada`;
       if (lang === "sv") return `omgång ${n}`;
       if (lang === "fr") return `Tour ${n}`;
-      return null;
     }
 
-    // -------------------------
-    // STAGE
-    // -------------------------
     if (k === "stage") {
       if (lang === "da") return `${n}. etape`;
       if (lang === "fi") return `${n}. etapin`;
       if (lang === "pt") return `Etapa ${n}`;
       if (lang === "sv") return `Etapp ${n}`;
       if (lang === "fr") return `Étape ${n}`;
-      return null;
     }
 
-    // -------------------------
-    // SET
-    // -------------------------
     if (k === "set") {
       if (lang === "da") return `${n}. sæt`;
       if (lang === "fi") return `${n}. erä`;
       if (lang === "pt") return `${n}º Set`;
       if (lang === "sv") return `Set ${n}`;
       if (lang === "fr") return `${n}er Set`;
-      return null;
     }
 
-    // -------------------------
-    // MAP
-    // -------------------------
     if (k === "map") {
       if (lang === "da") return `Map ${n}`;
       if (lang === "fi") return `Kartta ${n}`;
       if (lang === "pt") return `Mapa ${n}`;
       if (lang === "sv") return `Karta ${n}`;
       if (lang === "fr") return `Carte ${n}`;
-      return null;
     }
 
-    // -------------------------
-    // LEG
-    // -------------------------
     if (k === "leg") {
       if (lang === "da") return `${n}. leg`;
       if (lang === "fi") return `${n}. leg`;
       if (lang === "pt") return `${n}ª Perna`;
       if (lang === "sv") return `Leg ${n}`;
       if (lang === "fr") return `Leg ${n}`;
-      return null;
     }
 
-    // -------------------------
-    // HEAT
-    // -------------------------
     if (k === "heat") {
       if (lang === "da") return `${n}. heat`;
       if (lang === "fi") return `${n}. erä`;
       if (lang === "pt") return `${n}ª Eliminatória`;
       if (lang === "sv") return `Heat ${n}`;
       if (lang === "fr") return `Série ${n}`;
-      return null;
     }
 
     return null;
@@ -452,55 +499,25 @@
     const s = normalizeDashSpacing(segment);
 
     const patterns = [
-      {
-        kind: "quarter",
-        re1: /^Quarter\s*[-_]*\s*(\d+)$/i,
-        re2: /^(\d+)(st|nd|rd|th)\s+Quarter$/i,
-      },
-      {
-        kind: "round",
-        re1: /^Round\s*[-_]*\s*(\d+)$/i,
-        re2: /^(\d+)(st|nd|rd|th)\s+Round$/i,
-      },
-      {
-        kind: "stage",
-        re1: /^Stage\s*[-_]*\s*(\d+)$/i,
-        re2: /^(\d+)(st|nd|rd|th)\s+Stage$/i,
-      },
-      {
-        kind: "set",
-        re1: /^Set\s*[-_]*\s*(\d+)$/i,
-        re2: /^(\d+)(st|nd|rd|th)\s+Set$/i,
-      },
-      {
-        kind: "map",
-        re1: /^Map\s*[-_]*\s*(\d+)$/i,
-        re2: /^(\d+)(st|nd|rd|th)\s+Map$/i,
-      },
-      {
-        kind: "leg",
-        re1: /^Leg\s*[-_]*\s*(\d+)$/i,
-        re2: /^(\d+)(st|nd|rd|th)\s+Leg$/i,
-      },
-      {
-        kind: "heat",
-        re1: /^Heat\s*[-_]*\s*(\d+)$/i,
-        re2: /^(\d+)(st|nd|rd|th)\s+Heat$/i,
-      },
+      { kind: "quarter", re1: /^Quarter\s*[-_]*\s*(\d+)$/i, re2: /^(\d+)(st|nd|rd|th)\s+Quarter$/i },
+      { kind: "round", re1: /^Round\s*[-_]*\s*(\d+)$/i, re2: /^(\d+)(st|nd|rd|th)\s+Round$/i },
+      { kind: "stage", re1: /^Stage\s*[-_]*\s*(\d+)$/i, re2: /^(\d+)(st|nd|rd|th)\s+Stage$/i },
+      { kind: "set", re1: /^Set\s*[-_]*\s*(\d+)$/i, re2: /^(\d+)(st|nd|rd|th)\s+Set$/i },
+      { kind: "map", re1: /^Map\s*[-_]*\s*(\d+)$/i, re2: /^(\d+)(st|nd|rd|th)\s+Map$/i },
+      { kind: "leg", re1: /^Leg\s*[-_]*\s*(\d+)$/i, re2: /^(\d+)(st|nd|rd|th)\s+Leg$/i },
+      { kind: "heat", re1: /^Heat\s*[-_]*\s*(\d+)$/i, re2: /^(\d+)(st|nd|rd|th)\s+Heat$/i },
     ];
 
     for (const p of patterns) {
       let m = s.match(p.re1);
       if (m) {
-        const n = Number(m[1]);
-        const out = renderNumberedLabel(p.kind, n, lang);
+        const out = renderNumberedLabel(p.kind, Number(m[1]), lang);
         if (out) return out;
       }
 
       m = s.match(p.re2);
       if (m) {
-        const n = Number(m[1]);
-        const out = renderNumberedLabel(p.kind, n, lang);
+        const out = renderNumberedLabel(p.kind, Number(m[1]), lang);
         if (out) return out;
       }
     }
@@ -513,26 +530,17 @@
 
     const patterns = [
       { kind: "quarter", re1: /\bQuarter\s*[-_]*\s*(\d+)\b/gi, re2: /\b(\d+)(st|nd|rd|th)\s+Quarter\b/gi },
-      { kind: "round",   re1: /\bRound\s*[-_]*\s*(\d+)\b/gi,   re2: /\b(\d+)(st|nd|rd|th)\s+Round\b/gi },
-      { kind: "stage",   re1: /\bStage\s*[-_]*\s*(\d+)\b/gi,   re2: /\b(\d+)(st|nd|rd|th)\s+Stage\b/gi },
-      { kind: "set",     re1: /\bSet\s*[-_]*\s*(\d+)\b/gi,     re2: /\b(\d+)(st|nd|rd|th)\s+Set\b/gi },
-      { kind: "map",     re1: /\bMap\s*[-_]*\s*(\d+)\b/gi,     re2: /\b(\d+)(st|nd|rd|th)\s+Map\b/gi },
-      { kind: "leg",     re1: /\bLeg\s*[-_]*\s*(\d+)\b/gi,     re2: /\b(\d+)(st|nd|rd|th)\s+Leg\b/gi },
-      { kind: "heat",    re1: /\bHeat\s*[-_]*\s*(\d+)\b/gi,    re2: /\b(\d+)(st|nd|rd|th)\s+Heat\b/gi },
+      { kind: "round", re1: /\bRound\s*[-_]*\s*(\d+)\b/gi, re2: /\b(\d+)(st|nd|rd|th)\s+Round\b/gi },
+      { kind: "stage", re1: /\bStage\s*[-_]*\s*(\d+)\b/gi, re2: /\b(\d+)(st|nd|rd|th)\s+Stage\b/gi },
+      { kind: "set", re1: /\bSet\s*[-_]*\s*(\d+)\b/gi, re2: /\b(\d+)(st|nd|rd|th)\s+Set\b/gi },
+      { kind: "map", re1: /\bMap\s*[-_]*\s*(\d+)\b/gi, re2: /\b(\d+)(st|nd|rd|th)\s+Map\b/gi },
+      { kind: "leg", re1: /\bLeg\s*[-_]*\s*(\d+)\b/gi, re2: /\b(\d+)(st|nd|rd|th)\s+Leg\b/gi },
+      { kind: "heat", re1: /\bHeat\s*[-_]*\s*(\d+)\b/gi, re2: /\b(\d+)(st|nd|rd|th)\s+Heat\b/gi },
     ];
 
     for (const p of patterns) {
-      s = s.replace(p.re1, (_m, d) => {
-        const n = Number(d);
-        const out = renderNumberedLabel(p.kind, n, lang);
-        return out || _m;
-      });
-
-      s = s.replace(p.re2, (_m, d) => {
-        const n = Number(d);
-        const out = renderNumberedLabel(p.kind, n, lang);
-        return out || _m;
-      });
+      s = s.replace(p.re1, (_m, d) => renderNumberedLabel(p.kind, Number(d), lang) || _m);
+      s = s.replace(p.re2, (_m, d) => renderNumberedLabel(p.kind, Number(d), lang) || _m);
     }
 
     return s;
@@ -572,11 +580,10 @@
       if (!tr) continue;
 
       const src = normalizeDashSpacing(key);
-      const re = new RegExp(
-        `(^|[\\s\\-–/:,()])(${escapeRegExp(src)})(?=$|[\\s\\-–/:,()])`,
-        "gi"
-      );
 
+      if (hasTemplateToken(src)) continue;
+
+      const re = new RegExp(`(^|[\\s\\-–/:,()])(${escapeRegExp(src)})(?=$|[\\s\\-–/:,()])`, "gi");
       out = out.replace(re, (_m, p1) => `${p1}${tr}`);
     }
 
@@ -586,36 +593,20 @@
   function translateSegment(segment, lang) {
     const clean = normalizeDashSpacing(segment);
 
-    // 0) Generic numbered label exact segment FIRST
-    // This is the key fix for cases like "Stage 7"
     const directNumbered = translateSingleNumberedLabel(clean, lang);
-    if (directNumbered) {
-      return directNumbered;
-    }
+    if (directNumbered) return directNumbered;
 
-    // 1) Exact / case-insensitive lookup through normalized key
     const exact = EXACT_MAP.get(getLookupKey(clean));
-    if (exact?.[lang]) {
-      return postProcessTranslatedText(exact[lang], lang);
-    }
+    if (exact?.[lang]) return postProcessTranslatedText(exact[lang], lang);
 
-    // 2) Template
     const tpl = translateTemplateSegment(clean, lang);
-    if (tpl) {
-      return postProcessTranslatedText(tpl, lang);
-    }
+    if (tpl) return postProcessTranslatedText(tpl, lang);
 
-    // 3) Partial exact
     const partial = translateExactSegment(clean, lang);
-    if (norm(partial) !== norm(clean)) {
-      return postProcessTranslatedText(partial, lang);
-    }
+    if (norm(partial) !== norm(clean)) return postProcessTranslatedText(partial, lang);
 
-    // 4) Generic inside text
     const generic = postProcessTranslatedText(clean, lang);
-    if (norm(generic) !== norm(clean)) {
-      return generic;
-    }
+    if (norm(generic) !== norm(clean)) return generic;
 
     return clean;
   }
@@ -623,10 +614,6 @@
   function reorderTranslatedMarketParts(parts, lang) {
     const out = [...parts];
 
-    // Danish special reorder:
-    // Tournament - 7. etape - vinder
-    // =>
-    // Tournament - vinder 7. etape
     if (lang === "da" && out.length >= 3) {
       for (let i = 0; i < out.length - 1; i++) {
         const current = String(out[i] || "").trim();
@@ -649,6 +636,16 @@
     const original = normalizeDashSpacing(srcText);
     if (!original) return "";
 
+    const fullExact = EXACT_MAP.get(getLookupKey(original));
+    if (fullExact?.[lang]) return postProcessTranslatedText(fullExact[lang], lang);
+
+    // Critical for long markets:
+    // Tournament X - Regular Season - Total Receiving Yards - Player X
+    const fullTemplate = translateTemplateSegment(original, lang);
+    if (fullTemplate && norm(fullTemplate) !== norm(original)) {
+      return postProcessTranslatedText(fullTemplate, lang);
+    }
+
     const parts = splitMarketPartsForTranslation(original);
     if (!parts.length) return original;
 
@@ -660,29 +657,14 @@
 
   function applyBaseAll(srcText) {
     const original = normalizeDashSpacing(srcText);
+    const out = { mode: "generic" };
 
-    const da = translateMarket(original, "da");
-    const fi = translateMarket(original, "fi");
-    const pt = translateMarket(original, "pt");
-    let sv = translateMarket(original, "sv");
-    let fr = translateMarket(original, "fr");
+    for (const lang of getTranslationLangKeys()) {
+      out[lang] = translateMarket(original, lang);
+    }
 
-    if (!sv || norm(sv) === norm(original)) sv = original;
-    if (!fr || norm(fr) === norm(original)) fr = original;
-
-    return {
-      da,
-      fi,
-      pt,
-      sv,
-      fr,
-      mode: "generic",
-    };
+    return out;
   }
-
-  // =========================================================
-  // GEMINI FALLBACK + SMART TRANSLATION FLOW
-  // =========================================================
 
   function refreshGeminiKey() {
     GEMINI_KEY = String(GEMINI_KEY || "").trim() || null;
@@ -710,17 +692,6 @@
     } catch {}
   }
 
-  function getGeminiCacheCount() {
-    const c = loadGeminiCache();
-    return Object.keys(c).length;
-  }
-
-  function clearGeminiCache() {
-    try {
-      localStorage.removeItem(GEMINI_CACHE_KEY);
-    } catch {}
-  }
-
   function postFixPT(s) {
     return String(s || "")
       .replace(/\bremates\b/gi, "chutes")
@@ -739,9 +710,7 @@
       return JSON.parse(raw);
     } catch {}
 
-    const fenced =
-      raw.match(/```json\s*([\s\S]*?)\s*```/i) ||
-      raw.match(/```\s*([\s\S]*?)\s*```/i);
+    const fenced = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/```\s*([\s\S]*?)\s*```/i);
 
     if (fenced) {
       try {
@@ -818,7 +787,7 @@ ${text}
     if (!result) return 0;
 
     let count = 0;
-    for (const lang of ["da", "fi", "pt", "sv", "fr"]) {
+    for (const lang of getTranslationLangKeys()) {
       const val = norm(normalizeDashSpacing(result[lang] || ""));
       if (val && val !== src) count++;
     }
@@ -829,68 +798,11 @@ ${text}
     return countChangedTranslations(original, result) > 0;
   }
 
-  function shouldAutoPushGeminiResult(srcText, result) {
-    const original = norm(sanitizeGeminiText(srcText));
-    if (!result) return false;
-
-    return ["da", "fi", "pt", "sv", "fr"].some((lang) => {
-      const v = norm(sanitizeGeminiText(result[lang] || ""));
-      return v && v !== original;
-    });
-  }
-
-  async function tryAutoPushGeminiResultToSheet(srcText, result) {
-    try {
-      if (!srcText || !result) return false;
-
-      const builtStore = buildStoredValues(srcText, result);
-
-      const enText = sanitizeGeminiText(builtStore.storedValues.en || "");
-      const daText = sanitizeGeminiText(builtStore.storedValues.da || "");
-      const fiText = sanitizeGeminiText(builtStore.storedValues.fi || "");
-      const ptText = sanitizeGeminiText(builtStore.storedValues.pt || "");
-      const svText = sanitizeGeminiText(builtStore.storedValues.sv || "");
-      const frText = sanitizeGeminiText(builtStore.storedValues.fr || "");
-
-      if (!enText) return false;
-      if (!shouldAutoPushGeminiResult(enText, {
-        da: daText,
-        fi: fiText,
-        pt: ptText,
-        sv: svText,
-        fr: frText,
-      })) {
-        return false;
-      }
-
-      const queryParams =
-        `?action=add` +
-        `&en=${encodeURIComponent(enText)}` +
-        `&da=${encodeURIComponent(daText)}` +
-        `&fi=${encodeURIComponent(fiText)}` +
-        `&pt=${encodeURIComponent(ptText)}` +
-        `&sv=${encodeURIComponent(svText)}` +
-        `&fr=${encodeURIComponent(frText)}`;
-
-      await fetch(SHEET_URL + queryParams, {
-        method: "GET",
-        credentials: "omit",
-        cache: "no-store",
-      }).catch(() => null);
-
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   async function translateWithGemini(text) {
     const sourceText = sanitizeGeminiText(text);
     const apiKey = refreshGeminiKey();
 
-    if (!apiKey) {
-      throw new Error("No Gemini API key loaded.");
-    }
+    if (!apiKey) throw new Error("No Gemini API key loaded.");
 
     const cacheKey = buildGeminiCacheKey(sourceText);
     const cache = loadGeminiCache();
@@ -904,20 +816,10 @@ ${text}
     if (wait > 0) await sleep(wait);
     lastGeminiAt = Date.now();
 
-    const endpoint =
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
     const body = {
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: buildGeminiPrompt(sourceText),
-            },
-          ],
-        },
-      ],
+      contents: [{ role: "user", parts: [{ text: buildGeminiPrompt(sourceText) }] }],
       generationConfig: {
         temperature: 0,
         topP: 0.1,
@@ -950,9 +852,7 @@ ${text}
     const rawHttpText = await r.text().catch(() => "");
 
     if (!r.ok) {
-      if (r.status === 429) {
-        throw new Error("Gemini 429 (quota/cooldown).");
-      }
+      if (r.status === 429) throw new Error("Gemini 429 (quota/cooldown).");
       throw new Error(`Gemini error (${r.status}): ${rawHttpText || r.statusText}`);
     }
 
@@ -968,8 +868,7 @@ ${text}
     }
 
     const candidate = data?.candidates?.[0];
-    const modelText =
-      candidate?.content?.parts?.map((p) => p?.text || "").join("") || "";
+    const modelText = candidate?.content?.parts?.map((p) => p?.text || "").join("") || "";
 
     let parsed = tryParseGeminiJson(modelText);
 
@@ -977,9 +876,7 @@ ${text}
       parsed = tryParseGeminiJson(candidate.content.parts[0].text);
     }
 
-    if (!parsed) {
-      throw new Error("Gemini did not return valid JSON.");
-    }
+    if (!parsed) throw new Error("Gemini did not return valid JSON.");
 
     const result = sanitizeGeminiResult(sourceText, parsed, false);
 
@@ -996,10 +893,6 @@ ${text}
     };
     saveGeminiCache(cacheToSave);
 
-    // Auto-push disabled on purpose.
-    // Leave manual push only.
-    // await tryAutoPushGeminiResultToSheet(sourceText, result);
-
     return result;
   }
 
@@ -1008,17 +901,11 @@ ${text}
     const baseChanged = countChangedTranslations(srcText, baseResult);
 
     if (baseChanged >= 1) {
-      return {
-        ...baseResult,
-        mode: "base",
-      };
+      return { ...baseResult, mode: "base" };
     }
 
     if (!refreshGeminiKey()) {
-      return {
-        ...baseResult,
-        mode: "base-no-match-no-key",
-      };
+      return { ...baseResult, mode: "base-no-match-no-key" };
     }
 
     try {
@@ -1028,10 +915,7 @@ ${text}
         return geminiResult;
       }
 
-      return {
-        ...baseResult,
-        mode: "base-no-match-gemini-no-change",
-      };
+      return { ...baseResult, mode: "base-no-match-gemini-no-change" };
     } catch (err) {
       console.warn("Gemini fallback failed:", err);
       return {
@@ -1042,9 +926,6 @@ ${text}
     }
   }
 
-  // =========================================================
-  // UI / STRUCTURE / FLOW
-  // =========================================================
   function ensureStyles() {
     if (document.getElementById(PANEL_ID + "-style")) return;
     const style = document.createElement("style");
@@ -1113,8 +994,9 @@ ${text}
     bPush.className = "tt-btn tt-btnadmin";
     bPush.textContent = "Push to Database";
 
-    let statusEl = document.createElement("div");
+    const statusEl = document.createElement("div");
     statusEl.className = "tt-status";
+
     const setStatus = (msg) => {
       statusEl.textContent = msg;
       statusEl.style.display = msg ? "block" : "none";
@@ -1195,9 +1077,6 @@ ${text}
     bAuto.className = "tt-btn tt-btnprimary";
     bAuto.textContent = "Translate";
 
-    // ---------------------------------------------------------
-    // BOTONES
-    // ---------------------------------------------------------
     btnSync.onclick = () => {
       setStatus("Syncing...");
       if (popupWindow && !popupWindow.closed) popupWindow.close();
@@ -1210,6 +1089,7 @@ ${text}
         15,
         100
       );
+
       if (!row) return setStatus("Modal not found. Please open it first.");
 
       const fields = getModalFields();
@@ -1221,7 +1101,6 @@ ${text}
       setStatus("Translating...");
 
       const result = await translateSmart(enText);
-
       const builtStore = buildStoredValues(enText, result);
 
       LAST_TRANSLATION_CONTEXT = {
@@ -1231,18 +1110,15 @@ ${text}
         result,
       };
 
-      setNativeValue(fields.da, result.da || "");
-      setNativeValue(fields.fi, result.fi || "");
-      setNativeValue(fields.pt, result.pt || "");
-      if (fields.sv) setNativeValue(fields.sv, result.sv || enText);
-      if (fields.fr) setNativeValue(fields.fr, result.fr || enText);
+      for (const [lang, field] of Object.entries(fields)) {
+        if (!field || lang === SOURCE_LANG) continue;
+        setNativeValue(field, result?.[lang] || "");
+      }
 
       if (result.error) {
         setStatus(`⚠️ ${result.mode}: ${result.error}`);
       } else {
-        setStatus(
-          `✅ Translated (${result.mode}${result._cached ? " / cache" : ""}): ${builtStore.storedValues.en}`
-        );
+        setStatus(`✅ Translated (${result.mode}${result._cached ? " / cache" : ""}): ${builtStore.storedValues.en}`);
       }
     };
 
@@ -1251,62 +1127,46 @@ ${text}
       const enText = fields?.en ? (fields.en.value || "").trim() : "";
       if (!enText) return setStatus("⚠️ No English term found to push.");
 
-      const daTextFull = fields?.da ? (fields.da.value || "").trim() : "";
-      const fiTextFull = fields?.fi ? (fields.fi.value || "").trim() : "";
-      const ptTextFull = fields?.pt ? (fields.pt.value || "").trim() : "";
-      const svTextFull = fields?.sv ? (fields.sv.value || "").trim() : "";
-      const frTextFull = fields?.fr ? (fields.fr.value || "").trim() : "";
-
       const useStoredSource =
         LAST_TRANSLATION_CONTEXT?.rawSource &&
         norm(normalizeDashSpacing(LAST_TRANSLATION_CONTEXT.rawSource)) === norm(normalizeDashSpacing(enText)) &&
         LAST_TRANSLATION_CONTEXT?.storedValues;
 
-      const enToStore = useStoredSource
-        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.en)
-        : sanitizeGeminiText(enText);
+      const valuesToStore = {
+        en: useStoredSource ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.en) : sanitizeGeminiText(enText),
+      };
 
-      const daToStore = useStoredSource
-        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.da)
-        : sanitizeGeminiText(daTextFull);
-
-      const fiToStore = useStoredSource
-        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.fi)
-        : sanitizeGeminiText(fiTextFull);
-
-      const ptToStore = useStoredSource
-        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.pt)
-        : sanitizeGeminiText(ptTextFull);
-
-      const svToStore = useStoredSource
-        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.sv)
-        : sanitizeGeminiText(svTextFull);
-
-      const frToStore = useStoredSource
-        ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues.fr)
-        : sanitizeGeminiText(frTextFull);
-
-      if (!enToStore) {
-        return setStatus("⚠️ No valid sourceToStore found to push.");
+      for (const lang of getTranslationLangKeys()) {
+        const fieldValue = fields?.[lang] ? (fields[lang].value || "").trim() : "";
+        valuesToStore[lang] = useStoredSource
+          ? sanitizeGeminiText(LAST_TRANSLATION_CONTEXT.storedValues?.[lang] || "")
+          : sanitizeGeminiText(fieldValue);
       }
 
-      setStatus(`Pushing: ${enToStore}`);
+      if (!valuesToStore.en) return setStatus("⚠️ No valid sourceToStore found to push.");
+
+      setStatus(`Pushing: ${valuesToStore.en}`);
+
       if (popupWindow && !popupWindow.closed) popupWindow.close();
 
-      const queryParams =
-        `?action=add` +
-        `&en=${encodeURIComponent(enToStore)}` +
-        `&da=${encodeURIComponent(daToStore)}` +
-        `&fi=${encodeURIComponent(fiToStore)}` +
-        `&pt=${encodeURIComponent(ptToStore)}` +
-        `&sv=${encodeURIComponent(svToStore)}` +
-        `&fr=${encodeURIComponent(frToStore)}`;
+      const paramKeyByLang = {
+        en: "en",
+        en_CA: "en_CA",
+        da: "da",
+        fi: "fi",
+        pt: "pt",
+        sv: "sv",
+        fr: "fr",
+      };
 
-      popupWindow = window.open(
-        SHEET_URL + queryParams,
-        "tbo_push",
-        "width=400,height=300,left=200,top=200"
-      );
+      let queryParams = `?action=add`;
+
+      for (const [lang, value] of Object.entries(valuesToStore)) {
+        const paramKey = paramKeyByLang[lang] || lang;
+        queryParams += `&${encodeURIComponent(paramKey)}=${encodeURIComponent(value || "")}`;
+      }
+
+      popupWindow = window.open(SHEET_URL + queryParams, "tbo_push", "width=400,height=300,left=200,top=200");
     };
 
     btnX.onclick = () => {
