@@ -41,8 +41,8 @@ async function listAutomations() {
 async function runAutomation(id) {
   const tab = await getActiveTab();
   if (!tab || !tab.id) throw new Error("No active tab");
-  const res = await chrome.tabs.sendMessage(tab.id, { type: "TBO_RUN_AUTOMATION", id });
-  if (!res || !res.ok) throw new Error(res?.error || "Automation failed");
+
+  chrome.tabs.sendMessage(tab.id, { type: "TBO_RUN_AUTOMATION", id });
 }
 
 // -------- Order persistence --------
@@ -153,11 +153,12 @@ function renderAutomationRow(a) {
     setStatus("", "");
     btn.disabled = true;
     btn.textContent = "…";
+
     try {
       await runAutomation(a.id);
+      window.close();
     } catch (e) {
       setStatus(String(e.message || e), "err");
-    } finally {
       btn.disabled = false;
       btn.textContent = "Run";
     }
@@ -210,4 +211,3 @@ async function refresh() {
 
 refreshBtn.onclick = refresh;
 refresh();
-
