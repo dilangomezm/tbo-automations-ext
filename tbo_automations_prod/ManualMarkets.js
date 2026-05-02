@@ -1,9 +1,9 @@
-// ManualPPS.js
+// ManualMarkets.js
 (() => {
   // Verificación de seguridad (obligatoria)
   if (!window.registerAutomation) return;
 
-  window.registerAutomation("manual_pps", { name: "Manual PPS" }, async () => {
+  window.registerAutomation("manual_markets", { name: "Manual Markets" }, async () => {
     try {
       // =========================
       // SCRIPT ORIGINAL (ENCAPSULADO)
@@ -179,7 +179,7 @@
 
         popup.innerHTML = `
         <div class="tbo-header" id="tbo-header-drag">
-            <span class="tbo-title">Batch Outcome Filler</span>
+            <span class="tbo-title">Manual Markets</span>
             <div class="tbo-controls">
                 <button class="tbo-ctrl-btn" id="tbo-btn-min" title="Minimize">－</button>
                 <button class="tbo-ctrl-btn" id="tbo-btn-close" title="Close">✕</button>
@@ -210,53 +210,132 @@
           input.dispatchEvent(new Event("blur", { bubbles: true }));
         };
 
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        const getDomRows = () =>
+          document.querySelectorAll(
+            '[data-testid="event-details-markets-draft-market-outcome-row"]'
+          );
+
+        const waitForOutcomeRows = async (expectedCount, timeoutMs = 10000) => {
+          const start = Date.now();
+
+          while (Date.now() - start < timeoutMs) {
+            const rows = getDomRows();
+            if (rows.length >= expectedCount) return rows;
+            await sleep(250);
+          }
+
+          return getDomRows();
+        };
+
+        const prepareOutcomeArea = async (requiredCount) => {
+          let domRows = getDomRows();
+          const currentCount = domRows.length;
+
+          if (requiredCount <= currentCount) {
+            return domRows;
+          }
+
+          const missingCount = requiredCount - currentCount;
+
+          const outcomeCountInput = document.querySelector(
+            '[data-testid="event-details-markets-draft-outcomes-count-input"] input'
+          );
+
+          const addOutcomeButton = document.querySelector(
+            '[data-testid="event-details-markets-draft-add-outcome-button"]'
+          );
+
+          if (!outcomeCountInput || !addOutcomeButton) {
+            throw new Error("Could not find outcome count input or Add outcome button.");
+          }
+
+          setReactValue(outcomeCountInput, String(missingCount));
+          await sleep(150);
+
+          addOutcomeButton.click();
+
+          domRows = await waitForOutcomeRows(requiredCount);
+
+          if (domRows.length < requiredCount) {
+            throw new Error(
+              `Only ${domRows.length} outcome row(s) available. Expected ${requiredCount}.`
+            );
+          }
+
+          return domRows;
+        };
+
         // --- 5. ACTION: FILL FORM ---
         const runBtn = document.getElementById("tbo-btn-run");
         const inputData = document.getElementById("tbo-input-data");
         const statusMsg = document.getElementById("tbo-status-msg");
 
-        runBtn.addEventListener("click", () => {
-          const rawText = inputData.value;
-          if (!rawText.trim()) {
-            statusMsg.textContent = "Data is empty. Please paste first.";
-            statusMsg.style.color = "#F0A64A";
-            return;
-          }
-
-          // Split by lines
-          const lines = rawText.split("\n").filter((l) => l.trim() !== "");
-
-          // Find DOM rows
-          const domRows = document.querySelectorAll(
-            '[data-testid="event-details-markets-draft-market-outcome-row"]'
-          );
-
-          let count = 0;
-
-          lines.forEach((line, index) => {
-            if (index < domRows.length) {
-              // Determine separator: Excel uses Tabs (\t), otherwise Comma
-              const separator = line.includes("\t") ? "\t" : ",";
-              const parts = line.split(separator);
-
-              const player = parts[0]?.trim();
-              const odd = parts[1]?.trim();
-
-              const row = domRows[index];
-
-              // Select inputs (Name and Odds)
-              const nameInput = row.querySelector('input[name*=".name"]');
-              const oddInput = row.querySelector('input[name*=".odds"]');
-
-              if (nameInput && player) setReactValue(nameInput, player);
-              if (oddInput && odd) setReactValue(oddInput, odd);
-
-              count++;
+        runBtn.addEventListener("click", async () => {
+          try {
+            const rawText = inputData.value;
+            if (!rawText.trim()) {
+              statusMsg.textContent = "Data is empty. Please paste first.";
+              statusMsg.style.color = "#F0A64A";
+              return;
             }
-          });
 
-          statusMsg.style.color = "#E6E8EE";
-          statusMsg.textContent = `Success: Filled ${count} outcome(s).`;
+            // Split by lines
+            const lines = rawText.split("\n").filter((l) => l.trim() !== "");
+
+            if (!lines.length) {
+              statusMsg.textContent = "No valid rows detected.";
+              statusMsg.style.color = "#F0A64A";
+              return;
+            }
+
+            runBtn.disabled = true;
+            runBtn.style.opacity = "0.65";
+            runBtn.style.cursor = "not-allowed";
+
+            statusMsg.style.color = "#E6E8EE";
+            statusMsg.textContent = `Preparing ${lines.length} outcome field(s)...`;
+
+            const domRows = await prepareOutcomeArea(lines.length);
+
+            await sleep(300);
+
+            let count = 0;
+
+            lines.forEach((line, index) => {
+              if (index < domRows.length) {
+                // Determine separator: Excel uses Tabs (\t), otherwise Comma
+                const separator = line.includes("\t") ? "\t" : ",";
+                const parts = line.split(separator);
+
+                const player = parts[0]?.trim();
+                const odd = parts[1]?.trim();
+
+                const row = domRows[index];
+
+                // Select inputs (Name and Odds)
+                const nameInput = row.querySelector('input[name*=".name"]');
+                const oddInput = row.querySelector('input[name*=".odds"]');
+
+                if (nameInput && player) setReactValue(nameInput, player);
+                if (oddInput && odd) setReactValue(oddInput, odd);
+
+                count++;
+              }
+            });
+
+            statusMsg.style.color = "#E6E8EE";
+            statusMsg.textContent = `Success: Filled ${count} outcome(s).`;
+          } catch (err) {
+            console.error("[manual_markets] Run error:", err);
+            statusMsg.style.color = "#F0A64A";
+            statusMsg.textContent = `Error: ${String(err?.message || err)}`;
+          } finally {
+            runBtn.disabled = false;
+            runBtn.style.opacity = "";
+            runBtn.style.cursor = "";
+          }
         });
 
         // --- 6. WINDOW BEHAVIOR (Drag, Minimize, Close) ---
@@ -308,7 +387,7 @@
 
       return { ok: true };
     } catch (err) {
-      console.error("[manual_pps] Error:", err);
+      console.error("[manual_markets] Error:", err);
       return { ok: false, error: String(err?.message || err) };
     }
   });
