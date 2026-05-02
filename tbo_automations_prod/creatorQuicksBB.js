@@ -433,7 +433,6 @@
         minBtn.onclick = () => {
           minimized = !minimized;
           body.style.display = minimized ? "none" : "block";
-          minBtn.textContent = minimized ? "+" : "−";
           persistPosition(panel);
         };
 
