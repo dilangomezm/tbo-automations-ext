@@ -24,7 +24,7 @@
       ],
       "js": [
         "content.js", "uiKit.js", "alertsAssistant.js", "creatorBoost.js", "DataExtraction.js",
-        "betTicketAlert.js", "BasketballMonsterNews.js", "ManualPPS.js", "OddsConverter",
+        "betTicketAlert.js", "BasketballMonsterNews.js", "ManualPPS.js", "OddsConverter.js",
         "creatorQuicksBB.js", "GolfTranslations.js", "translationTool.js"
       ],
       "run_at": "document_idle"
