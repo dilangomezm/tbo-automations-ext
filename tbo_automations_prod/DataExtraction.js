@@ -4,6 +4,18 @@
 
   const INTERNAL_AUTOMATIONS = {};
 
+  const DATA_EXTRACTION_WINDOW_POSITION = { x: 0, y: 0 };
+
+  const applySavedWindowPosition = (modal) => {
+    modal.style.transform =
+      `translate3d(${DATA_EXTRACTION_WINDOW_POSITION.x}px, ${DATA_EXTRACTION_WINDOW_POSITION.y}px, 0)`;
+  };
+
+  const saveWindowPosition = (x, y) => {
+    DATA_EXTRACTION_WINDOW_POSITION.x = x;
+    DATA_EXTRACTION_WINDOW_POSITION.y = y;
+  };
+
   INTERNAL_AUTOMATIONS.br_extraction = async () => {
     try {
       const CONTAINER_ID = "extractorbr-container";
@@ -32,7 +44,7 @@
           position:fixed;
           top:20px;
           right:20px;
-          width:380px;
+          width:420px;
           background:var(--bg-base);
           border:1px solid var(--border-color);
           border-radius:14px;
@@ -48,8 +60,9 @@
         }
 
         .ebr-header{
-          background:var(--bg-panel);
-          padding:10px 14px;
+          height:36px;
+          background:linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04));
+          padding:0 10px;
           display:flex;
           justify-content:space-between;
           align-items:center;
@@ -58,10 +71,13 @@
           user-select:none;
         }
 
+        .ebr-header:active{ cursor:grabbing; }
+
         .ebr-title{
-          font-size:13px;
+          font-size:12px;
           font-weight:650;
-          letter-spacing:.3px;
+          letter-spacing:.2px;
+          color:var(--text-main);
         }
 
         .ebr-controls{
@@ -70,19 +86,18 @@
         }
 
         .ebr-control-btn{
-          background:transparent;
-          border:none;
-          color:var(--text-muted);
-          cursor:pointer;
-          font-size:12px;
-          width:24px;
-          height:24px;
-          border-radius:6px;
-        }
-
-        .ebr-control-btn:hover{
-          background:rgba(255,255,255,.05);
+          width:26px;
+          height:22px;
+          border-radius:8px;
+          border:1px solid var(--border-color);
+          background:rgba(255,255,255,0.02);
           color:var(--text-main);
+          font-weight:650;
+          cursor:pointer;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          padding:0;
         }
 
         .ebr-body{
@@ -158,7 +173,7 @@
           <span class="ebr-title">BR Extraction</span>
 
           <div class="ebr-controls">
-            <button class="ebr-control-btn" id="ebr-minimize" title="Minimize">_</button>
+            <button class="ebr-control-btn" id="ebr-minimize" title="Minimize">−</button>
             <button class="ebr-control-btn" id="ebr-close" title="Close">✕</button>
           </div>
         </div>
@@ -190,13 +205,15 @@
       const btnRun = modal.querySelector("#ebr-run");
       const output = modal.querySelector("#ebr-output");
 
+      applySavedWindowPosition(modal);
+
       let isDragging = false;
-      let currentX = 0;
-      let currentY = 0;
-      let initialX = 0;
-      let initialY = 0;
-      let xOffset = 0;
-      let yOffset = 0;
+      let currentX = DATA_EXTRACTION_WINDOW_POSITION.x;
+      let currentY = DATA_EXTRACTION_WINDOW_POSITION.y;
+      let initialX = DATA_EXTRACTION_WINDOW_POSITION.x;
+      let initialY = DATA_EXTRACTION_WINDOW_POSITION.y;
+      let xOffset = DATA_EXTRACTION_WINDOW_POSITION.x;
+      let yOffset = DATA_EXTRACTION_WINDOW_POSITION.y;
 
       header.addEventListener("mousedown", (e) => {
         if (e.target.closest(".ebr-controls")) return;
@@ -216,6 +233,7 @@
 
         xOffset = currentX;
         yOffset = currentY;
+        saveWindowPosition(currentX, currentY);
 
         modal.style.transform =
           `translate3d(${currentX}px, ${currentY}px, 0)`;
@@ -660,7 +678,6 @@
       };
     }
   };
-
   INTERNAL_AUTOMATIONS.AsianMonitorExtraction = async () => {
     try {
       const normalizeMarketName = (value) => {
@@ -752,8 +769,9 @@
           }
 
           .am-header {
-              background-color: var(--am-bg-panel);
-              padding: 10px 14px;
+              height: 36px;
+              background: linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04));
+              padding: 0 10px;
               display: flex;
               justify-content: space-between;
               align-items: center;
@@ -766,10 +784,10 @@
           .am-header:active { cursor: grabbing; }
 
           .am-title {
-              font-size: 13px;
+              font-size: 12px;
               font-weight: 650;
+              letter-spacing: 0.2px;
               color: var(--am-text-main);
-              letter-spacing: 0.3px;
           }
 
           .am-window-controls {
@@ -778,23 +796,18 @@
           }
 
           .am-control-btn {
-              background: transparent;
-              border: none;
-              color: var(--am-text-muted);
+              width: 26px;
+              height: 22px;
+              border-radius: 8px;
+              border: 1px solid var(--am-border-color);
+              background: rgba(255,255,255,0.02);
+              color: var(--am-text-main);
+              font-weight: 650;
               cursor: pointer;
-              font-size: 12px;
-              width: 24px;
-              height: 24px;
-              border-radius: 6px;
               display: flex;
               align-items: center;
               justify-content: center;
-              transition: all 0.2s;
-          }
-
-          .am-control-btn:hover {
-              background-color: rgba(255,255,255,0.05);
-              color: var(--am-text-main);
+              padding: 0;
           }
 
           .am-body {
@@ -941,13 +954,15 @@
       };
 
       const makeDraggable = (modal, header) => {
+        applySavedWindowPosition(modal);
+
         let isDragging = false;
-        let currentX;
-        let currentY;
-        let initialX;
-        let initialY;
-        let xOffset = 0;
-        let yOffset = 0;
+        let currentX = DATA_EXTRACTION_WINDOW_POSITION.x;
+        let currentY = DATA_EXTRACTION_WINDOW_POSITION.y;
+        let initialX = DATA_EXTRACTION_WINDOW_POSITION.x;
+        let initialY = DATA_EXTRACTION_WINDOW_POSITION.y;
+        let xOffset = DATA_EXTRACTION_WINDOW_POSITION.x;
+        let yOffset = DATA_EXTRACTION_WINDOW_POSITION.y;
 
         header.addEventListener("mousedown", dragStart);
         document.addEventListener("mousemove", drag);
@@ -967,6 +982,7 @@
           currentY = e.clientY - initialY;
           xOffset = currentX;
           yOffset = currentY;
+          saveWindowPosition(currentX, currentY);
           modal.style.transform = `translate3d(${currentX}px, ${currentY}px, 0)`;
         }
 
@@ -1146,7 +1162,6 @@
 
         return fallbackRows;
       };
-
       const collectAvailablePlayerPropsMarkets = () => {
         const markets = [];
         const marketRows = document.querySelectorAll("tr.trplay");
@@ -1312,7 +1327,7 @@
           <div class="am-header" id="am-header">
               <span class="am-title">Asian Monitor Extractor</span>
               <div class="am-window-controls">
-                  <button class="am-control-btn" id="am-btn-minimize" title="Minimize">_</button>
+                  <button class="am-control-btn" id="am-btn-minimize" title="Minimize">−</button>
                   <button class="am-control-btn" id="am-btn-close" title="Close">✕</button>
               </div>
           </div>
@@ -1350,7 +1365,7 @@
           <div class="am-header" id="am-header">
               <span class="am-title">Asian Monitor Player Props Extractor</span>
               <div class="am-window-controls">
-                  <button class="am-control-btn" id="am-btn-minimize" title="Minimize">_</button>
+                  <button class="am-control-btn" id="am-btn-minimize" title="Minimize">−</button>
                   <button class="am-control-btn" id="am-btn-close" title="Close">✕</button>
               </div>
           </div>
@@ -1418,7 +1433,7 @@
           <div class="am-header" id="am-header">
               <span class="am-title">Asian Monitor Outrights Extractor</span>
               <div class="am-window-controls">
-                  <button class="am-control-btn" id="am-btn-minimize" title="Minimize">_</button>
+                  <button class="am-control-btn" id="am-btn-minimize" title="Minimize">−</button>
                   <button class="am-control-btn" id="am-btn-close" title="Close">✕</button>
               </div>
           </div>
@@ -1511,7 +1526,6 @@
         const existingStyles = document.getElementById("b365-extractor-styles");
         if (existingStyles) existingStyles.remove();
       };
-
       const injectBet365Styles = () => {
         const existingStyles = document.getElementById("b365-extractor-styles");
         if (existingStyles) existingStyles.remove();
@@ -1556,8 +1570,9 @@
           }
 
           .b365-header {
-              background-color: var(--bg-panel);
-              padding: 10px 14px;
+              height: 36px;
+              background: linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04));
+              padding: 0 10px;
               display: flex;
               justify-content: space-between;
               align-items: center;
@@ -1570,10 +1585,10 @@
           .b365-header:active { cursor: grabbing; }
 
           .b365-title {
-              font-size: 13px;
+              font-size: 12px;
               font-weight: 650;
+              letter-spacing: 0.2px;
               color: var(--text-main);
-              letter-spacing: 0.3px;
           }
 
           .b365-window-controls {
@@ -1582,23 +1597,18 @@
           }
 
           .b365-control-btn {
-              background: transparent;
-              border: none;
-              color: var(--text-muted);
+              width: 26px;
+              height: 22px;
+              border-radius: 8px;
+              border: 1px solid var(--border-color);
+              background: rgba(255,255,255,0.02);
+              color: var(--text-main);
+              font-weight: 650;
               cursor: pointer;
-              font-size: 12px;
-              width: 24px;
-              height: 24px;
-              border-radius: 6px;
               display: flex;
               align-items: center;
               justify-content: center;
-              transition: all 0.2s;
-          }
-
-          .b365-control-btn:hover {
-              background-color: rgba(255,255,255,0.05);
-              color: var(--text-main);
+              padding: 0;
           }
 
           .b365-body {
@@ -1745,13 +1755,15 @@
       };
 
       const makeDraggable = (modal, header) => {
+        applySavedWindowPosition(modal);
+
         let isDragging = false;
-        let currentX;
-        let currentY;
-        let initialX;
-        let initialY;
-        let xOffset = 0;
-        let yOffset = 0;
+        let currentX = DATA_EXTRACTION_WINDOW_POSITION.x;
+        let currentY = DATA_EXTRACTION_WINDOW_POSITION.y;
+        let initialX = DATA_EXTRACTION_WINDOW_POSITION.x;
+        let initialY = DATA_EXTRACTION_WINDOW_POSITION.y;
+        let xOffset = DATA_EXTRACTION_WINDOW_POSITION.x;
+        let yOffset = DATA_EXTRACTION_WINDOW_POSITION.y;
 
         header.addEventListener("mousedown", dragStart);
         document.addEventListener("mousemove", drag);
@@ -1771,6 +1783,7 @@
           currentY = e.clientY - initialY;
           xOffset = currentX;
           yOffset = currentY;
+          saveWindowPosition(currentX, currentY);
           modal.style.transform = `translate3d(${currentX}px, ${currentY}px, 0)`;
         }
 
@@ -2130,7 +2143,7 @@
           <div class="b365-header" id="b365-header">
               <span class="b365-title">Data Extractor</span>
               <div class="b365-window-controls">
-                  <button class="b365-control-btn" id="b365-btn-minimize" title="Minimize">_</button>
+                  <button class="b365-control-btn" id="b365-btn-minimize" title="Minimize">−</button>
                   <button class="b365-control-btn" id="b365-btn-close" title="Close">✕</button>
               </div>
           </div>
@@ -2168,7 +2181,7 @@
           <div class="b365-header" id="b365-header">
               <span class="b365-title">Player Props Extractor</span>
               <div class="b365-window-controls">
-                  <button class="b365-control-btn" id="b365-btn-minimize" title="Minimize">_</button>
+                  <button class="b365-control-btn" id="b365-btn-minimize" title="Minimize">−</button>
                   <button class="b365-control-btn" id="b365-btn-close" title="Close">✕</button>
               </div>
           </div>
@@ -2236,7 +2249,7 @@
           <div class="b365-header" id="b365-header">
               <span class="b365-title">Outrights Extractor</span>
               <div class="b365-window-controls">
-                  <button class="b365-control-btn" id="b365-btn-minimize" title="Minimize">_</button>
+                  <button class="b365-control-btn" id="b365-btn-minimize" title="Minimize">−</button>
                   <button class="b365-control-btn" id="b365-btn-close" title="Close">✕</button>
               </div>
           </div>
@@ -2330,7 +2343,7 @@
           position:fixed;
           top:20px;
           right:20px;
-          width:380px;
+          width:420px;
           background:var(--de-bg-base);
           border:1px solid var(--de-border-color);
           border-radius:14px;
@@ -2346,8 +2359,9 @@
         }
 
         .de-header{
-          background:var(--de-bg-panel);
-          padding:10px 14px;
+          height:36px;
+          background:linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04));
+          padding:0 10px;
           display:flex;
           justify-content:space-between;
           align-items:center;
@@ -2361,10 +2375,10 @@
         }
 
         .de-title{
-          font-size:13px;
+          font-size:12px;
           font-weight:650;
+          letter-spacing:.2px;
           color:var(--de-text-main);
-          letter-spacing:.3px;
         }
 
         .de-window-controls{
@@ -2373,23 +2387,18 @@
         }
 
         .de-control-btn{
-          background:transparent;
-          border:none;
-          color:var(--de-text-muted);
+          width:26px;
+          height:22px;
+          border-radius:8px;
+          border:1px solid var(--de-border-color);
+          background:rgba(255,255,255,0.02);
+          color:var(--de-text-main);
+          font-weight:650;
           cursor:pointer;
-          font-size:12px;
-          width:24px;
-          height:24px;
-          border-radius:6px;
           display:flex;
           align-items:center;
           justify-content:center;
-          transition:all .2s;
-        }
-
-        .de-control-btn:hover{
-          background:rgba(255,255,255,.05);
-          color:var(--de-text-main);
+          padding:0;
         }
 
         .de-body{
@@ -2461,7 +2470,7 @@
           <span class="de-title">Data extraction</span>
 
           <div class="de-window-controls">
-            <button class="de-control-btn" id="de-btn-minimize" title="Minimize">_</button>
+            <button class="de-control-btn" id="de-btn-minimize" title="Minimize">−</button>
             <button class="de-control-btn" id="de-btn-close" title="Close">✕</button>
           </div>
         </div>
@@ -2491,13 +2500,15 @@
       const btnBetRadar = modal.querySelector("#de-btn-betradar");
       const message = modal.querySelector("#de-message");
 
+      applySavedWindowPosition(modal);
+
       let isDragging = false;
-      let currentX = 0;
-      let currentY = 0;
-      let initialX = 0;
-      let initialY = 0;
-      let xOffset = 0;
-      let yOffset = 0;
+      let currentX = DATA_EXTRACTION_WINDOW_POSITION.x;
+      let currentY = DATA_EXTRACTION_WINDOW_POSITION.y;
+      let initialX = DATA_EXTRACTION_WINDOW_POSITION.x;
+      let initialY = DATA_EXTRACTION_WINDOW_POSITION.y;
+      let xOffset = DATA_EXTRACTION_WINDOW_POSITION.x;
+      let yOffset = DATA_EXTRACTION_WINDOW_POSITION.y;
 
       header.addEventListener("mousedown", (e) => {
         if (e.target.closest(".de-window-controls")) return;
@@ -2517,6 +2528,7 @@
 
         xOffset = currentX;
         yOffset = currentY;
+        saveWindowPosition(currentX, currentY);
 
         modal.style.transform =
           `translate3d(${currentX}px, ${currentY}px, 0)`;
