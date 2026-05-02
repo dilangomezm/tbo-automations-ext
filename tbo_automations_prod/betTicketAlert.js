@@ -42,7 +42,168 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
   const TEXT = ui.THEME?.text || "#e6e8ee";
   const MUTED = ui.THEME?.muted || "rgba(230,232,238,0.65)";
   const BORDER = ui.THEME?.border || "rgba(255,255,255,0.10)";
+  const CARD = ui.THEME?.card || ui.THEME?.panel || "#13161d";
   const BG_HI = "rgba(240,166,74,0.10)";
+  const FONT = "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
+
+  /************************************
+   * 💠 HEADER STYLE — CREATOR QUICKSB B
+   ************************************/
+  function applyCreatorQuicksHeaderStyle() {
+    const panel =
+      document.getElementById("tbo_betticket_filters") ||
+      panelApi.panel ||
+      panelApi.root ||
+      panelApi.el ||
+      panelApi.element ||
+      null;
+
+    if (!panel) return;
+
+    panel.style.background = CARD;
+    panel.style.color = TEXT;
+    panel.style.fontFamily = FONT;
+
+    const header =
+      panelApi.header ||
+      panel.querySelector("[data-tbo-panel-header]") ||
+      panel.querySelector(".tbo-panel-header") ||
+      panel.querySelector(".tbo-header") ||
+      panel.querySelector("[class*='header' i]") ||
+      panel.firstElementChild;
+
+    if (!header) return;
+
+    header.style.height = "36px";
+    header.style.minHeight = "36px";
+    header.style.display = "flex";
+    header.style.alignItems = "center";
+    header.style.justifyContent = "space-between";
+    header.style.padding = "0 10px";
+    header.style.cursor = "grab";
+    header.style.userSelect = "none";
+    header.style.background = "linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04))";
+    header.style.borderBottom = `1px solid ${BORDER}`;
+    header.style.boxSizing = "border-box";
+    header.style.fontFamily = FONT;
+    header.style.color = TEXT;
+
+    header.addEventListener("mousedown", (e) => {
+      const target = e.target;
+      if (target && target.closest && target.closest("button")) return;
+      header.style.cursor = "grabbing";
+    });
+
+    window.addEventListener("mouseup", () => {
+      header.style.cursor = "grab";
+    });
+
+    const titleNode =
+      Array.from(header.querySelectorAll("div, span"))
+        .find((el) => (el.textContent || "").trim() === "BetTicket Filters") ||
+      Array.from(header.querySelectorAll("div, span"))
+        .find((el) => (el.textContent || "").includes("BetTicket Filters")) ||
+      Array.from(header.children)
+        .find((el) => !el.querySelector?.("button"));
+
+    if (titleNode) {
+      titleNode.style.fontFamily = FONT;
+      titleNode.style.fontWeight = "650";
+      titleNode.style.fontSize = "12px";
+      titleNode.style.letterSpacing = ".2px";
+      titleNode.style.color = TEXT;
+      titleNode.style.lineHeight = "1";
+    }
+
+    let actions =
+      Array.from(header.children)
+        .find((el) => el.querySelector && el.querySelector("button")) ||
+      header.querySelector(".tbo-actions") ||
+      header.querySelector(".tbo-panel-actions");
+
+    if (!actions) {
+      actions = document.createElement("div");
+      header.appendChild(actions);
+    }
+
+    actions.style.display = "flex";
+    actions.style.gap = "6px";
+    actions.style.alignItems = "center";
+
+    const buttons = Array.from(header.querySelectorAll("button"));
+
+    let minBtn =
+      buttons.find((btn) => {
+        const txt = (btn.textContent || "").trim();
+        const title = (btn.getAttribute("title") || "").toLowerCase();
+        return txt === "−" || txt === "-" || title.includes("min");
+      }) || null;
+
+    let closeBtn =
+      buttons.find((btn) => {
+        const txt = (btn.textContent || "").trim().toLowerCase();
+        const title = (btn.getAttribute("title") || "").toLowerCase();
+        return txt === "✕" || txt === "x" || txt === "×" || title.includes("close") || title.includes("cerrar");
+      }) || null;
+
+    if (!minBtn) {
+      minBtn = document.createElement("button");
+      minBtn.title = "Minimize";
+      minBtn.textContent = "−";
+      actions.insertBefore(minBtn, actions.firstChild);
+    }
+
+    if (!closeBtn) {
+      closeBtn = document.createElement("button");
+      closeBtn.title = "Close";
+      closeBtn.textContent = "✕";
+      actions.appendChild(closeBtn);
+    }
+
+    [minBtn, closeBtn].forEach((btn) => {
+      btn.style.width = "26px";
+      btn.style.height = "22px";
+      btn.style.borderRadius = "8px";
+      btn.style.border = `1px solid ${BORDER}`;
+      btn.style.background = "rgba(255,255,255,0.02)";
+      btn.style.color = TEXT;
+      btn.style.fontWeight = "650";
+      btn.style.cursor = "pointer";
+      btn.style.padding = "0";
+      btn.style.lineHeight = "20px";
+      btn.style.fontSize = "12px";
+      btn.style.fontFamily = FONT;
+      btn.style.boxSizing = "border-box";
+    });
+
+    minBtn.textContent = "−";
+    closeBtn.textContent = "✕";
+
+    if (!minBtn.__tboHeaderStandardBound) {
+      minBtn.__tboHeaderStandardBound = true;
+      let minimized = false;
+
+      minBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        minimized = !minimized;
+        panelApi.body.style.display = minimized ? "none" : "block";
+        minBtn.textContent = "−";
+      });
+    }
+
+    if (!closeBtn.__tboHeaderStandardBound) {
+      closeBtn.__tboHeaderStandardBound = true;
+
+      closeBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        panel.remove();
+      });
+    }
+  }
+
+  requestAnimationFrame(applyCreatorQuicksHeaderStyle);
 
   panelApi.setHTML(`
     <div class="tbo-col" style="gap:12px;">
@@ -89,6 +250,8 @@ registerAutomation("betticket_alert", { name: "BetTicket Filters" }, function ()
       </div>
     </div>
   `);
+
+  requestAnimationFrame(applyCreatorQuicksHeaderStyle);
 
   let selectedCustomers = [];
   let bsrEnabled = false;
