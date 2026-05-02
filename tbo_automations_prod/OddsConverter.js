@@ -149,7 +149,7 @@
               panel.style.position = "fixed";
               panel.style.top = "90px";
               panel.style.right = "24px";
-              panel.style.width = "260px";
+              panel.style.width = "420px";
               panel.style.maxWidth = "92vw";
               panel.style.background = THEME.CARD;
               panel.style.border = `1px solid ${THEME.BORDER}`;
@@ -173,19 +173,21 @@
 
               header.innerHTML = `
                 <div style="display:flex; align-items:center; gap:10px;">
-                  <div style="font-weight:650; font-size:12px; letter-spacing:.2px;">OddsConverter</div>
+                  <div style="font-weight:650; font-size:12px; letter-spacing:.2px; color:${THEME.TEXT};">OddsConverter</div>
                 </div>
                 <div style="display:flex; gap:6px;">
                   <button id="oddsMin" title="Minimize" style="
                     width:26px;height:22px;border-radius:8px;
                     border:1px solid ${THEME.BORDER};
                     background:rgba(255,255,255,0.02);
-                    color:${THEME.TEXT}; font-weight:650; cursor:pointer;">−</button>
+                    color:${THEME.TEXT}; font-weight:650; font-size:12px; cursor:pointer;
+                    display:flex; align-items:center; justify-content:center; padding:0;">−</button>
                   <button id="closeProTool" title="Close" style="
                     width:26px;height:22px;border-radius:8px;
                     border:1px solid ${THEME.BORDER};
                     background:rgba(255,255,255,0.02);
-                    color:${THEME.TEXT}; font-weight:650; cursor:pointer;">✕</button>
+                    color:${THEME.TEXT}; font-weight:650; font-size:12px; cursor:pointer;
+                    display:flex; align-items:center; justify-content:center; padding:0;">✕</button>
                 </div>
               `;
 
@@ -227,19 +229,6 @@
                     cursor:pointer;">
                     Convert Fractional
                   </button>
-
-                  <button id="btnReset" style="
-                    width:100%;
-                    border:1px solid ${THEME.BORDER};
-                    background:rgba(255,255,255,0.02);
-                    color:${THEME.TEXT};
-                    border-radius:12px;
-                    padding:9px 12px;
-                    font-weight:650;
-                    font-size:12px;
-                    cursor:pointer;">
-                    Reset to Original
-                  </button>
                 </div>
               `;
 
@@ -250,7 +239,6 @@
 
               const btnAm = panel.querySelector('#btnAm');
               const btnFr = panel.querySelector('#btnFr');
-              const btnReset = panel.querySelector('#btnReset');
               const minBtn = panel.querySelector('#oddsMin');
               const closeBtn = panel.querySelector('#closeProTool');
 
@@ -278,22 +266,9 @@
                 cursor:pointer;
               `;
 
-              const resetButtonStyle = `
-                width:100%;
-                border:1px solid ${THEME.BORDER};
-                background:rgba(255,255,255,0.02);
-                color:${THEME.TEXT};
-                border-radius:12px;
-                padding:9px 12px;
-                font-weight:650;
-                font-size:12px;
-                cursor:pointer;
-              `;
-
               const updateButtons = () => {
                   btnAm.style.cssText = mode === 'american' ? primaryButtonStyle : secondaryButtonStyle;
                   btnFr.style.cssText = mode === 'fractional' ? primaryButtonStyle : secondaryButtonStyle;
-                  btnReset.style.cssText = resetButtonStyle;
               };
 
               btnAm.onmouseenter = () => {
@@ -310,22 +285,15 @@
                   btnFr.style.opacity = "1";
               };
 
-              btnReset.onmouseenter = () => {
-                  btnReset.style.background = "rgba(255,255,255,0.06)";
-              };
-              btnReset.onmouseleave = () => {
-                  btnReset.style.cssText = resetButtonStyle;
-              };
-
               minBtn.onmouseenter = () => {
-                  minBtn.style.background = "rgba(255,255,255,0.06)";
+                  minBtn.style.background = "rgba(255,255,255,0.05)";
               };
               minBtn.onmouseleave = () => {
                   minBtn.style.background = "rgba(255,255,255,0.02)";
               };
 
               closeBtn.onmouseenter = () => {
-                  closeBtn.style.background = "rgba(255,255,255,0.06)";
+                  closeBtn.style.background = "rgba(255,255,255,0.05)";
               };
               closeBtn.onmouseleave = () => {
                   closeBtn.style.background = "rgba(255,255,255,0.02)";
@@ -373,7 +341,6 @@
               minBtn.onclick = () => {
                   minimized = !minimized;
                   body.style.display = minimized ? "none" : "block";
-                  minBtn.textContent = minimized ? "+" : "−";
                   persistPosition(panel);
               };
 
@@ -387,12 +354,6 @@
 
               btnFr.onclick = () => {
                   mode = mode === 'fractional' ? 'original' : 'fractional';
-                  updateButtons();
-                  applyLogic();
-              };
-
-              btnReset.onclick = () => {
-                  mode = 'original';
                   updateButtons();
                   applyLogic();
               };
