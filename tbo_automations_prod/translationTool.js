@@ -933,12 +933,13 @@ ${text}
     style.textContent = `
       #${PANEL_ID} { font-family: system-ui,-apple-system,sans-serif; box-sizing: border-box; }
       #${PANEL_ID} * { box-sizing: border-box; }
-      #${PANEL_ID} .tt-panel{ position: fixed; top: 90px; right: 24px; width: 300px; background: #13161D; color: #E6E8EE; border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.45); z-index: 999999; }
-      #${PANEL_ID} .tt-header{ display:flex; align-items:center; justify-content:space-between; padding: 10px; background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.10); cursor: move; user-select: none; }
-      #${PANEL_ID} .tt-title{ font-size: 13px; font-weight: 600; cursor: pointer; }
-      #${PANEL_ID} .tt-actions{ display:flex; gap: 4px; }
-      #${PANEL_ID} .tt-iconbtn{ width: 26px; height: 26px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: #E6E8EE; cursor: pointer; font-weight: bold; font-size: 13px;}
-      #${PANEL_ID} .tt-iconbtn:hover{ background: rgba(255,255,255,0.1); }
+      #${PANEL_ID} .tt-panel{ position: fixed; top: 90px; right: 24px; width: 420px; background: #13161D; color: #E6E8EE; border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.45); z-index: 999999; overflow: hidden; }
+      #${PANEL_ID} .tt-header{ height: 36px; display:flex; align-items:center; justify-content:space-between; padding: 0 10px; background: linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04)); border-bottom: 1px solid rgba(255,255,255,0.10); cursor: grab; user-select: none; }
+      #${PANEL_ID} .tt-header:active{ cursor: grabbing; }
+      #${PANEL_ID} .tt-title{ font-size: 12px; font-weight: 650; letter-spacing: .2px; cursor: pointer; color: #E6E8EE; }
+      #${PANEL_ID} .tt-actions{ display:flex; gap: 6px; }
+      #${PANEL_ID} .tt-iconbtn{ width: 26px; height: 22px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.02); color: #E6E8EE; cursor: pointer; font-weight: 650; font-size: 12px; display: flex; align-items: center; justify-content: center; padding: 0; }
+      #${PANEL_ID} .tt-iconbtn:hover{ background: rgba(255,255,255,0.05); }
       #${PANEL_ID} .tt-body{ padding: 12px; display: flex; flex-direction: column; gap: 8px; }
       #${PANEL_ID} .tt-btn{ width: 100%; border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600; border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.03); color: #E6E8EE; cursor: pointer; transition: 0.1s; }
       #${PANEL_ID} .tt-btn:hover{ background: rgba(255,255,255,0.08); }
@@ -984,11 +985,13 @@ ${text}
 
     const btnMin = document.createElement("button");
     btnMin.className = "tt-iconbtn";
-    btnMin.textContent = "–";
+    btnMin.textContent = "−";
+    btnMin.title = "Minimize";
 
     const btnX = document.createElement("button");
     btnX.className = "tt-iconbtn";
-    btnX.textContent = "×";
+    btnX.textContent = "✕";
+    btnX.title = "Close";
 
     const bPush = document.createElement("button");
     bPush.className = "tt-btn tt-btnadmin";
