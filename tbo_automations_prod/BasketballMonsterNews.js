@@ -840,29 +840,32 @@
               overflow: hidden;
             ">
               <div id="bmHandle" style="
-                padding: 10px 12px;
+                height: 36px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 10px;
+                cursor: grab;
+                user-select: none;
                 background: linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04));
                 border-bottom: 1px solid rgba(255,255,255,0.10);
-                display:flex; align-items:center; justify-content:space-between; gap:10px;
-                cursor: grab;
+                box-sizing: border-box;
               ">
                 <div style="min-width:0;">
-                  <a href="${SITE_URL}" target="_blank" rel="noopener noreferrer" style="
+                  <div style="
                     display:block;
-                    font-size:13px;
+                    font-size:12px;
                     font-weight:650;
+                    letter-spacing:.2px;
                     white-space:nowrap;
                     overflow:hidden;
                     text-overflow:ellipsis;
                     color:#E6E8EE;
-                    text-decoration:none;
-                  ">NBAlerts (Monster)</a>
-                  <div id="bmSub" style="margin-top:2px;font-size:11px;color:rgba(230,232,238,0.65);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                    Idle
-                  </div>
+                  ">NBAlerts (Monster)</div>
+                  <div id="bmSub" style="display:none;"></div>
                 </div>
 
-                <div style="display:flex; gap:8px; align-items:center; flex:0 0 auto;">
+                <div style="display:flex; gap:6px; align-items:center; flex:0 0 auto;">
                   <button id="bmStop" style="
                     border-radius: 12px;
                     border: 1px solid rgba(255,255,255,0.10);
@@ -886,36 +889,40 @@
                   ">Run</button>
 
                   <button id="bmMin" title="Minimize" style="
-                    width: 34px;
-                    height: 34px;
-                    border-radius: 12px;
+                    width: 26px;
+                    height: 22px;
+                    border-radius: 8px;
                     border: 1px solid rgba(255,255,255,0.10);
-                    background: rgba(255,255,255,0.03);
-                    color: rgba(230,232,238,0.85);
+                    background: rgba(255,255,255,0.02);
+                    color: #E6E8EE;
                     display:flex;
                     align-items:center;
                     justify-content:center;
                     cursor: pointer;
-                    font-size: 16px;
-                    font-weight: 700;
-                    line-height: 1;
-                  ">—</button>
-
-                  <button id="bmClose" title="Close" style="
-                    width: 34px;
-                    height: 34px;
-                    border-radius: 12px;
-                    border: 1px solid rgba(255,255,255,0.10);
-                    background: rgba(255,255,255,0.03);
-                    color: rgba(230,232,238,0.85);
-                    display:flex;
-                    align-items:center;
-                    justify-content:center;
-                    cursor: pointer;
-                    font-size: 16px;
+                    font-size: 12px;
                     font-weight: 650;
                     line-height: 1;
-                  ">×</button>
+                    padding: 0;
+                    box-sizing: border-box;
+                  ">−</button>
+
+                  <button id="bmClose" title="Close" style="
+                    width: 26px;
+                    height: 22px;
+                    border-radius: 8px;
+                    border: 1px solid rgba(255,255,255,0.10);
+                    background: rgba(255,255,255,0.02);
+                    color: #E6E8EE;
+                    display:flex;
+                    align-items:center;
+                    justify-content:center;
+                    cursor: pointer;
+                    font-size: 12px;
+                    font-weight: 650;
+                    line-height: 1;
+                    padding: 0;
+                    box-sizing: border-box;
+                  ">✕</button>
                 </div>
               </div>
 
@@ -1344,7 +1351,7 @@
               const applyMin = (minimized) => {
                 if (!body || !btn) return;
                 body.style.display = minimized ? "none" : "block";
-                btn.textContent = minimized ? "▢" : "—";
+                btn.textContent = "−";
                 btn.title = minimized ? "Restore" : "Minimize";
                 try {
                   localStorage.setItem(STORAGE_PANEL_MINIMIZED_KEY, minimized ? "1" : "0");
