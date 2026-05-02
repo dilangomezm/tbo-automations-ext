@@ -10,8 +10,7 @@
   },
   "permissions": ["storage", "activeTab", "tabs"],
   "host_permissions": [
-    "https://*.goldrush.llc/*",
-    "https://basketballmonster.com/*"
+    "<all_urls>"
   ],
   "action": {
     "default_popup": "popup.html"
@@ -19,8 +18,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.goldrush.llc/*",
-        "https://basketballmonster.com/*"
+        "http://*/*",
+        "https://*/*"
       ],
       "js": [
         "content.js", "uiKit.js", "alertsAssistant.js", "creatorBoost.js", "DataExtraction.js",
