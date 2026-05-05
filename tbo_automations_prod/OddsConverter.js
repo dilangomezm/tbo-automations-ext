@@ -149,7 +149,7 @@
               panel.style.position = "fixed";
               panel.style.top = "90px";
               panel.style.right = "24px";
-              panel.style.width = "420px";
+              panel.style.width = "200px";
               panel.style.maxWidth = "92vw";
               panel.style.background = THEME.CARD;
               panel.style.border = `1px solid ${THEME.BORDER}`;
