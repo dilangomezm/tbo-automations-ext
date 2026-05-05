@@ -251,24 +251,22 @@
         }
 
         .cb-head { 
-          display: flex; align-items: center; justify-content: space-between; 
-          padding: 12px 14px; background: rgba(255,255,255,0.02);
-          border-bottom: 1px solid rgba(255,255,255,0.08); cursor: grab; user-select: none;
+          height: 36px; display: flex; align-items: center; justify-content: space-between; 
+          padding: 0 10px; background: linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04));
+          border-bottom: 1px solid rgba(255,255,255,0.10); cursor: grab; user-select: none;
         }
         .cb-head:active { cursor: grabbing; }
         
-        .cb-title-wrap { display: flex; align-items: center; gap: 8px; }
-        .cb-title { font-size: 13px; font-weight: 600; letter-spacing: 0.2px; }
+        .cb-title-wrap { display: flex; align-items: center; gap: 10px; }
+        .cb-title { font-size: 12px; font-weight: 650; letter-spacing: .2px; }
 
         .cb-window-controls { display: flex; align-items: center; gap: 6px; }
         .cb-icon-btn { 
-          display: flex; align-items: center; justify-content: center;
-          width: 24px; height: 24px; border-radius: 6px; border: none; 
-          background: transparent; color: rgba(230,232,238,0.65); cursor: pointer;
-          transition: background 150ms ease, color 150ms ease;
+          width: 26px; height: 22px; border-radius: 8px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(255,255,255,0.02);
+          color: #E6E8EE; font-weight: 650; cursor: pointer;
         }
-        .cb-icon-btn:hover { background: rgba(255,255,255,0.08); color: #E6E8EE; }
-        .cb-icon-btn.close:hover { background: rgba(255,80,80,0.2); color: #ff8181; }
 
         .cb-body { padding: 14px; max-height: 80vh; overflow-y: auto; }
 
@@ -381,8 +379,8 @@
             <div class="cb-title">Boost</div>
           </div>
           <div class="cb-window-controls">
-            <button class="cb-icon-btn minimize" id="cb-win-min">${SVG_MINIMIZE}</button>
-            <button class="cb-icon-btn close" id="cb-win-close">${SVG_CLOSE}</button>
+            <button class="cb-icon-btn minimize" id="cb-win-min" title="Minimize">−</button>
+            <button class="cb-icon-btn close" id="cb-win-close" title="Close">✕</button>
           </div>
         </div>
         <div class="cb-body" id="cb-dynamic-body"></div>
@@ -518,6 +516,7 @@
             <div id="cb-error" class="cb-err"></div>
 
             <div class="cb-btn-row">
+              <button id="cb-back" class="cb-btn" type="button" style="flex:0 0 120px;">Back</button>
               <button id="cb-run" class="cb-btn cb-btn-primary" type="button">Run CreatorBoost</button>
             </div>
           `;
@@ -544,6 +543,8 @@
           homepageSwitch.onchange = () => {
             priorityContainer.style.display = homepageSwitch.checked ? "block" : "none";
           };
+
+          bodyEl.querySelector("#cb-back").onclick = () => renderStep1();
 
           bodyEl.querySelector("#cb-run").onclick = () => {
             const checkedBrands = Array.from(bodyEl.querySelectorAll('input[type="checkbox"][data-brand]:checked')).map(cb => cb.getAttribute("data-brand"));
@@ -605,7 +606,7 @@
         <div class="cb-head" id="cb-drag-handle">
           <div class="cb-title-wrap">${IMG_LIGHTNING}<div class="cb-title">CreatorBoost - Results</div></div>
           <div class="cb-window-controls">
-             <button class="cb-icon-btn close" id="cb-win-close">${SVG_CLOSE}</button>
+             <button class="cb-icon-btn close" id="cb-win-close" title="Close">✕</button>
           </div>
         </div>
         <div class="cb-body">
