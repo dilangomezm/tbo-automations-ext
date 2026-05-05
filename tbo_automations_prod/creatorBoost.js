@@ -6,16 +6,19 @@
     // =========================
     // BASE CONFIG
     // =========================
-    const DEFAULT_BRANDS = [
+    const MULTIBRANDS_BRANDS = [
       "Sweden/BetMGM",
       "Sweden/GoGo",
       "Sweden/Expekt",
       "Sweden/LeoVegas",
       "Brazil/BetMGM",
-      "Denmark/Expekt",
-      "Denmark/LeoVegas",
       "Canada/LeoVegas",
       "Finland/Expekt"
+    ];
+
+    const DENMARK_BRANDS = [
+      "Denmark/Expekt",
+      "Denmark/LeoVegas"
     ];
 
     const DEFAULT_MIN_ODDS = "1.5";
@@ -29,7 +32,7 @@
     // Target Margin goals
     const DESIRED_BOOST_PCT = 15; // 1.15x
     const MIN_ACCEPTABLE_BOOST_PCT = 10; // 1.10x
-    const TARGET_MARGIN_MIN = 0.01; // Solo aplica para Multibrands
+    const TARGET_MARGIN_MIN = 0.01; // Solo aplica para Denmark
 
     const CANCEL_REASON_FULL = "The actual result was not offered as an outcome. - NO_RESULT_ASSIGNABLE";
     const CANCEL_REASON_KEY = "NO_RESULT_ASSIGNABLE";
@@ -407,18 +410,18 @@
               Select the regulation for this boost session:
             </div>
             <div class="cb-btn-row" style="flex-direction: column; gap: 12px; margin-top: 5px;">
+              <button id="cb-btn-denmark" class="cb-btn cb-btn-primary">Boost Denmark</button>
               <button id="cb-btn-multi" class="cb-btn cb-btn-primary">Boost Multibrands</button>
-              <button id="cb-btn-brazil" class="cb-btn cb-btn-primary">Boost Brazil</button>
             </div>
           `;
+          bodyEl.querySelector('#cb-btn-denmark').onclick = () => renderStep2('denmark');
           bodyEl.querySelector('#cb-btn-multi').onclick = () => renderStep2('multibrands');
-          bodyEl.querySelector('#cb-btn-brazil').onclick = () => renderStep2('brazil');
         };
 
         // STEP 2: Main Config
         const renderStep2 = (region) => {
           // Filtrar marcas según selección
-          const brandsToShow = region === 'brazil' ? ["Brazil/BetMGM"] : DEFAULT_BRANDS;
+          const brandsToShow = region === 'denmark' ? DENMARK_BRANDS : MULTIBRANDS_BRANDS;
 
           bodyEl.innerHTML = `
             <div class="cb-card">
@@ -565,7 +568,7 @@
 
             container.remove();
             resolve({
-              region, // 'multibrands' o 'brazil'
+              region, // 'denmark' o 'multibrands'
               brands: checkedBrands,
               minOdds: String(min), maxOdds: String(max), boostType: bType,
               boostMainValue: String(boostMainValue), maxStakeLimit: String(maxStake), totalStakeLimit: String(totalStake),
@@ -894,16 +897,17 @@
         const minAccept10 = baseSyncOddForTM * (1 + MIN_ACCEPTABLE_BOOST_PCT / 100);
         const tmRaw15 = 100 * (1 - probabilityForTM * goal15);
         
-        // APLICACIÓN DE LA NUEVA REGLA (Brasil vs Multibrands)
-        if (cfg.region === 'brazil') {
-            tmUsedForBoost = trunc2(tmRaw15); // Permite negativos
-        } else {
+        // APLICACIÓN DE LA NUEVA REGLA (Multibrands vs Denmark)
+        if (cfg.region === 'multibrands') {
+            tmUsedForBoost = trunc2(tmRaw15); // Permite negativos (antigua lógica multibrands/brazil)
+        } else { // 'denmark'
             tmUsedForBoost = tmRaw15 < TARGET_MARGIN_MIN ? TARGET_MARGIN_MIN : trunc2(tmRaw15); // Capped at 0.01
         }
 
         const oddFinalByTM = trunc2((1 - tmUsedForBoost / 100) / probabilityForTM);
         
-        if (cfg.region === 'multibrands' && tmUsedForBoost === TARGET_MARGIN_MIN && oddFinalByTM < minAccept10) {
+        // Solo aplica el skip y la validación de TARGET_MARGIN_MIN para Dinamarca
+        if (cfg.region === 'denmark' && tmUsedForBoost === TARGET_MARGIN_MIN && oddFinalByTM < minAccept10) {
           __results.skipped.push({ eventName: eventNameFromTech, betslipUuid: betslipUuidFromTech, marginPct: ((oddFinalByTM / baseSyncOddForTM) - 1) * 100 });
           return false;
         }
