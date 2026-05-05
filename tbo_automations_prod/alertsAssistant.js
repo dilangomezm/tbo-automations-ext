@@ -116,7 +116,7 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
   panel.style.position = "fixed";
   panel.style.top = "90px";
   panel.style.right = "24px";
-  panel.style.width = "300px"; // Ancho ajustado a 300px
+  panel.style.width = "300px"; // Ancho inicial 300px
   panel.style.maxWidth = "92vw";
   panel.style.background = THEME.CARD;
   panel.style.border = `1px solid ${THEME.BORDER}`;
@@ -126,6 +126,7 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
   panel.style.fontFamily = "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
   panel.style.color = THEME.TEXT;
   panel.style.overflow = "hidden";
+  panel.style.transition = "width 0.3s cubic-bezier(0.4, 0, 0.2, 1)"; // Animación suave al cambiar tamaño
   document.body.appendChild(panel);
 
   const header = document.createElement("div");
@@ -166,7 +167,7 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
     secretTimer = setTimeout(() => { secretClicks = 0; }, 1500);
   };
 
-  // Contenedor para botones de control (Minimizar y Cerrar)
+  // Contenedor para botones de control
   const controls = document.createElement("div");
   controls.style.display = "flex";
   controls.style.gap = "6px";
@@ -271,28 +272,70 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
     alert(`✔ ${closed} alerts closed.`);
   }
 
-  async function processHandleForNode(row) {
+  // Configuración predeterminada
+  const defaultCancellationsConfig = {
+      reason: "NO_RESULT_ASSIGNABLE",
+      actions: { "cfg-confirm-all": true }
+  };
+
+  // --- LÓGICA DE CANCELACIONES ACTUALIZADA (Copia las opciones exactas) ---
+  async function processHandleForNode(row, config = defaultCancellationsConfig) {
     const menuBtn = row.querySelector('.MuiIconButton-root');
     if (!menuBtn) return false;
     clickEl(menuBtn);
     await sleep(300);
+    
     const handleOption = document.querySelector('[data-testid="cancellationsHandle"]');
     if (handleOption) {
       clickEl(handleOption);
       await waitFor(() => document.querySelector('.MuiDialog-container'), { timeout: 8000, interval: 150 }); 
       const dialog = document.querySelector('.MuiDialog-container');
       if (!dialog) { document.body.click(); return false; }
+      
+      // 1. Asignar Razón
       const reasonDropdown = dialog.querySelector('#reasonSelectProp');
-      if (reasonDropdown) {
-        const success = await selectDropdownValue(reasonDropdown, "NO_RESULT_ASSIGNABLE");
+      if (reasonDropdown && config.reason) {
+        const success = await selectDropdownValue(reasonDropdown, config.reason);
         if (!success) document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
       }
-      const confirmAllBtn = dialog.querySelector('[data-testid="confirm-all-checkbox"]');
-      if (confirmAllBtn) {
-        const checkbox = confirmAllBtn.querySelector('input');
-        if (checkbox) checkbox.click(); else confirmAllBtn.click();
-        await sleep(500);
+      
+      await sleep(600); // Esperar que la tabla UI se actualice post-razón
+
+      // Función auxiliar robusta para hacer clic en Checkboxes de Material UI
+      const checkMuiCb = (parentEl, testId) => {
+          if (!parentEl) return;
+          const wrapper = parentEl.querySelector(`[data-testid="${testId}"]`);
+          if (wrapper) {
+              const input = wrapper.querySelector('input');
+              if (input) input.click(); // Hacer clic directo en el input oculto
+              else wrapper.click();
+          }
+      };
+
+      // 2. Marcar Select All o Filas Individuales
+      if (config.actions['cfg-confirm-all']) {
+          checkMuiCb(dialog, "confirm-all-checkbox");
+      } else if (config.actions['cfg-reject-all']) {
+          checkMuiCb(dialog, "reject-all-checkbox");
+      } else {
+          // Si no es Select All, ir fila por fila de la tabla del popup
+          const rowsToCheck = ["row-SE", "row-SE-betmgm", "row-SE-gogo", "row-SE-expekt", "row-SE-leovegas", "row-BR", "row-BR-betmgm", "row-DK", "row-DK-expekt", "row-DK-leovegas", "row-CA", "row-CA-leovegas", "row-FI", "row-FI-expekt", "row-GB", "row-GB-leovegas", "row-GB-betmgm", "row-GB-betuk"];
+          
+          for (let rId of rowsToCheck) {
+              const rowEl = dialog.querySelector(`tr[data-row="${rId}"]`);
+              if (rowEl) {
+                  if (config.actions[`cfg-${rId}-confirm`]) {
+                      checkMuiCb(rowEl, "confirm-checkbox");
+                  } else if (config.actions[`cfg-${rId}-reject`]) {
+                      checkMuiCb(rowEl, "reject-checkbox");
+                  }
+              }
+          }
       }
+
+      await sleep(600); // Darle tiempo a la UI de registrar todos los checks
+
+      // 3. Guardar y Cerrar Alertas
       const saveBtn = dialog.querySelector('[data-testid="multistatePopupSave"]');
       if (saveBtn && !saveBtn.disabled) {
         saveBtn.click();
@@ -322,11 +365,13 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
   }
 
   function showMainMenu() {
+    panel.style.width = "300px"; // Retornar a 300px
+
     const isAlerts = currentMode === "alerts";
     title.innerText = isAlerts ? "Alerts Assistant" : "Cancellations Assistant";
     
     let htmlContent = `
-      <div style="border:1px solid ${THEME.BORDER}; background:rgba(255,255,255,0.02); border-radius:${THEME.RADIUS}px; padding:10px; display:flex; flex-direction:column; gap:2px;">
+      <div style="border:1px solid ${THEME.BORDER}; background:rgba(255,255,255,0.02); border-radius:${THEME.RADIUS}px; padding:12px; display:flex; flex-direction:column; gap:4px;">
         ${btnSecondary("assignBtn", isAlerts ? "Assign alerts by keyword" : "Assign Cancellations by keyword")}
         ${btnSecondary("closeBtn", isAlerts ? "Close alerts by keyword" : "Close Cancellations by keyword")}
         ${btnSecondary("closeAssignedBtn", isAlerts ? "Close assigned alerts" : "Close Assigned Cancellations")}
@@ -341,31 +386,29 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
 
     document.getElementById("assignBtn").onclick = showAssignMenu;
     document.getElementById("closeBtn").onclick = showCloseMenu;
+    
     document.getElementById("closeAssignedBtn").onclick = async () => {
       if (isAlerts) {
-          let closed = 0;
-          const rows = document.querySelectorAll("table tbody tr");
-          for (const row of rows) {
-              if (row.querySelector('button[data-testid="assign-to-me-button"]')) continue;
-              const menuBtn = row.querySelector('.MuiIconButton-root');
-              if (!menuBtn) continue;
-              menuBtn.click(); await sleep(150);
-              const closeOpt = [...document.querySelectorAll(".MuiTypography-root")].find(el => el.innerText.trim().toLowerCase() === "close");
-              if (closeOpt) { closeOpt.click(); closed++; }
-              await sleep(200);
+          const mainMenuBtn = document.querySelector('[data-testid="alerting-messages-actions-open-btn"]');
+          if (mainMenuBtn) {
+              clickEl(mainMenuBtn);
+              await sleep(400); 
+              const menuItems = Array.from(document.querySelectorAll('li[role="menuitem"]'));
+              const closeAllBtn = menuItems.find(el => el.textContent.includes("Close all assigned to me"));
+              if (closeAllBtn) {
+                  clickEl(closeAllBtn);
+                  alert("✔ 'Close all assigned to me' executed.");
+              } else {
+                  alert("Could not find the 'Close all assigned to me' option.");
+                  document.body.click(); 
+              }
+          } else {
+              alert("Could not find the main actions menu (3 dots).");
           }
-          alert(`✔ ${closed} assigned alerts closed.`);
       } else {
-          let closed = 0;
-          const rows = document.querySelectorAll("table tbody tr");
-          for (const row of rows) {
-              if (row.querySelector('button[data-testid="assign-to-me-button"]')) continue;
-              const success = await processHandleForNode(row);
-              if (success) closed++;
-          }
-          alert(`✔ ${closed} assigned cancellations handled.`);
+          // Despliega el menú de configuración y se expande a 420px
+          showCancellationConfigMenu();
       }
-      showMainMenu();
     };
 
     if (secretUnlocked) {
@@ -378,10 +421,143 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
     createRowButtons(inner);
   }
 
+  // --- MENÚ DE CONFIGURACIÓN CANCELLATIONS (EXPANDIDO) ---
+  function showCancellationConfigMenu() {
+    panel.style.width = "420px"; // Expandir a 420px para la tabla
+
+    const tableRowsData = [
+      { id: 'ALL', label: 'Select all', isMaster: true },
+      { id: 'row-SE', label: 'Sweden' },
+      { id: 'row-SE-betmgm', label: 'BetMGM' },
+      { id: 'row-SE-gogo', label: 'GoGo' },
+      { id: 'row-SE-expekt', label: 'Expekt' },
+      { id: 'row-SE-leovegas', label: 'LeoVegas' },
+      { id: 'row-BR', label: 'Brazil' },
+      { id: 'row-BR-betmgm', label: 'BetMGM' },
+      { id: 'row-DK', label: 'Denmark' },
+      { id: 'row-DK-expekt', label: 'Expekt' },
+      { id: 'row-DK-leovegas', label: 'LeoVegas' },
+      { id: 'row-CA', label: 'Canada' },
+      { id: 'row-CA-leovegas', label: 'LeoVegas' },
+      { id: 'row-FI', label: 'Finland' },
+      { id: 'row-FI-expekt', label: 'Expekt' },
+      { id: 'row-GB', label: 'GB' },
+      { id: 'row-GB-leovegas', label: 'LeoVegas' },
+      { id: 'row-GB-betmgm', label: 'BetMGM' },
+      { id: 'row-GB-betuk', label: 'BetUK' }
+    ];
+
+    let listHtml = tableRowsData.map(r => {
+      const isSub = r.id !== 'ALL' && r.id.split('-').length > 2;
+      const padding = isSub ? "20px" : "6px";
+      const fw = r.isMaster ? "bold" : "normal";
+      const confId = r.id === 'ALL' ? 'cfg-confirm-all' : `cfg-${r.id}-confirm`;
+      const rejId = r.id === 'ALL' ? 'cfg-reject-all' : `cfg-${r.id}-reject`;
+
+      return `
+        <div style="display:flex; align-items:center; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
+          <div style="padding-left:${padding}; font-size:12px; font-weight:${fw}; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:${THEME.TEXT};" title="${r.label}">${r.label}</div>
+          <div style="width:80px; text-align:center;">
+            <input type="checkbox" id="${confId}" class="cfg-cb" data-type="confirm" data-row="${r.id}" style="cursor:pointer; width:16px; height:16px; accent-color:#f0a64a;">
+          </div>
+          <div style="width:80px; text-align:center;">
+            <input type="checkbox" id="${rejId}" class="cfg-cb" data-type="reject" data-row="${r.id}" style="cursor:pointer; width:16px; height:16px; accent-color:#d32f2f;">
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    setPanelHTML(`
+      <div style="border:1px solid ${THEME.BORDER}; background:rgba(255,255,255,0.02); border-radius:${THEME.RADIUS}px; padding:14px; display:flex; flex-direction:column;">
+        
+        <label style="font-size:12px; font-weight:bold; color:${THEME.TEXT}; margin-bottom:6px;">Internal reason provided:</label>
+        <select id="massCancelReason" style="width:100%; padding:10px; border-radius:8px; border:1px solid ${THEME.BORDER}; background:#1a1d24; color:${THEME.TEXT}; font-size:12px; outline:none; box-sizing:border-box; margin-bottom:14px;">
+          <option value="GOODWILL">GOODWILL</option>
+          <option value="CANCELLED_EVENT">CANCELLED_EVENT</option>
+          <option value="DEAD_HEAT">DEAD_HEAT</option>
+          <option value="EVENT_ABANDONED">EVENT_ABANDONED</option>
+          <option value="INCORRECT_ODDS">INCORRECT_ODDS</option>
+          <option value="INCORRECT_STATISTICS">INCORRECT_STATISTICS</option>
+          <option value="MATCH_ENDED_IN_WALKOVER">MATCH_ENDED_IN_WALKOVER</option>
+          <option value="INCORRECT_KICK_OFF_TIME">INCORRECT_KICK_OFF_TIME</option>
+          <option value="EVENT_POSTPONED">EVENT_POSTPONED</option>
+          <option value="NO_GOALSCORER">NO_GOALSCORER</option>
+          <option value="FORMAT_CHANGE">FORMAT_CHANGE</option>
+          <option value="RETIRED_OR_DEFAULTED">RETIRED_OR_DEFAULTED</option>
+          <option value="RESULT_UNVERIFIABLE">RESULT_UNVERIFIABLE</option>
+          <option value="STARTING_PITCHER_CHANGED">STARTING_PITCHER_CHANGED</option>
+          <option value="SUBSTITUTION_GUARANTEE">SUBSTITUTION_GUARANTEE</option>
+          <option value="NO_RESULT_ASSIGNABLE" selected>NO_RESULT_ASSIGNABLE</option>
+        </select>
+
+        <div style="display:flex; align-items:center; margin-bottom:8px; font-size:12px; font-weight:bold; color:${THEME.TEXT}; border-bottom:2px solid rgba(255,255,255,0.1); padding-bottom:6px;">
+           <span style="flex:1;"></span>
+           <span style="width:80px; text-align:center;">Confirmed</span>
+           <span style="width:80px; text-align:center;">Rejected</span>
+        </div>
+        
+        <div style="max-height: 220px; overflow-y: auto; background:rgba(0,0,0,0.2); border-radius:8px; padding:0 8px; margin-bottom:16px; border:1px solid ${THEME.BORDER};">
+          ${listHtml}
+        </div>
+
+        ${btnPrimary("runMassCancel", "Execute")}
+        ${btnSecondary("backMassCancel", "← Back")}
+      </div>
+    `);
+
+    // Lógica para excluir mutuamente C y R + Comportamiento de "Select All"
+    document.querySelectorAll('.cfg-cb').forEach(cb => {
+       cb.addEventListener('change', (e) => {
+           const type = e.target.dataset.type; 
+           const row = e.target.dataset.row;
+           const oppType = type === 'confirm' ? 'reject' : 'confirm';
+           const oppId = row === 'ALL' ? `cfg-${oppType}-all` : `cfg-${row}-${oppType}`;
+           
+           if (e.target.checked) {
+               const oppCb = document.getElementById(oppId);
+               if(oppCb) oppCb.checked = false;
+               
+               if (row === 'ALL') {
+                   document.querySelectorAll(`.cfg-cb[data-type="${type}"]`).forEach(c => c.checked = true);
+                   document.querySelectorAll(`.cfg-cb[data-type="${oppType}"]`).forEach(c => c.checked = false);
+               }
+           } else {
+               if (row === 'ALL') {
+                   document.querySelectorAll(`.cfg-cb[data-type="${type}"]`).forEach(c => c.checked = false);
+               } else {
+                   const masterCb = document.getElementById(`cfg-${type}-all`);
+                   if (masterCb) masterCb.checked = false;
+               }
+           }
+       });
+    });
+
+    document.getElementById("backMassCancel").onclick = showMainMenu;
+    document.getElementById("runMassCancel").onclick = async () => {
+      const reason = document.getElementById("massCancelReason").value;
+      const config = { reason: reason, actions: {} };
+      
+      document.querySelectorAll('.cfg-cb').forEach(cb => {
+         if (cb.checked) config.actions[cb.id] = true;
+      });
+      
+      let closed = 0;
+      const rows = document.querySelectorAll("table tbody tr");
+      for (const row of rows) {
+          if (row.querySelector('button[data-testid="assign-to-me-button"]')) continue;
+          const success = await processHandleForNode(row, config);
+          if (success) closed++;
+      }
+      alert(`✔ ${closed} assigned cancellations handled.`);
+      showMainMenu();
+    };
+  }
+
   function showAssignMenu() {
+    panel.style.width = "300px"; // Retornar a 300px
     const isAlerts = currentMode === "alerts";
     setPanelHTML(`
-      <div style="border:1px solid ${THEME.BORDER}; background:rgba(255,255,255,0.02); border-radius:${THEME.RADIUS}px; padding:10px; display:flex; flex-direction:column; gap:2px;">
+      <div style="border:1px solid ${THEME.BORDER}; background:rgba(255,255,255,0.02); border-radius:${THEME.RADIUS}px; padding:12px; display:flex; flex-direction:column; gap:4px;">
         <div style="font-weight:650; font-size:12px; margin-bottom:8px; color:${THEME.TEXT};">${isAlerts ? "Assign alerts" : "Assign Cancellations"}</div>
         <input id="assignKeyword" type="text" placeholder="Keyword" style="width:100%; padding:10px; border-radius:10px; border:1px solid ${THEME.BORDER}; background:rgba(255,255,255,0.02); color:${THEME.TEXT}; font-size:12px; outline:none; box-sizing:border-box; margin-bottom:10px;">
         ${btnPrimary("confirmAssign", "Assign")}
@@ -406,9 +582,10 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
   }
 
   function showCloseMenu() {
+    panel.style.width = "300px"; // Retornar a 300px
     const isAlerts = currentMode === "alerts";
     setPanelHTML(`
-      <div style="border:1px solid ${THEME.BORDER}; background:rgba(255,255,255,0.02); border-radius:${THEME.RADIUS}px; padding:10px; display:flex; flex-direction:column; gap:2px;">
+      <div style="border:1px solid ${THEME.BORDER}; background:rgba(255,255,255,0.02); border-radius:${THEME.RADIUS}px; padding:12px; display:flex; flex-direction:column; gap:4px;">
         <div style="font-weight:650; font-size:12px; margin-bottom:8px; color:${THEME.TEXT};">${isAlerts ? "Close alerts" : "Close Cancellations"}</div>
         <input id="closeKeyword" type="text" placeholder="Keyword" style="width:100%; padding:10px; border-radius:10px; border:1px solid ${THEME.BORDER}; background:rgba(255,255,255,0.02); color:${THEME.TEXT}; font-size:12px; outline:none; box-sizing:border-box; margin-bottom:10px;">
         ${btnPrimary("confirmClose", "Close")}
@@ -423,7 +600,7 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
           let closed = 0;
           const rows = document.querySelectorAll("table tbody tr");
           for (const row of rows) { if (row.innerText.toLowerCase().includes(keyword)) {
-              const success = await processHandleForNode(row);
+              const success = await processHandleForNode(row); // Usará config por defecto
               if (success) closed++;
           }}
           alert(`✔ ${closed} cancellations handled.`);
@@ -435,10 +612,10 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
   function createRowButtons(container) {
     const sep = document.createElement("div"); sep.style.height = "10px"; container.appendChild(sep);
     const label = document.createElement("div"); label.innerText = "Rows per page"; label.style.cssText = "margin-bottom:6px; font-size:11px; font-weight:600; color:"+THEME.MUTED; container.appendChild(label);
-    const rowContainer = document.createElement("div"); rowContainer.style.cssText = "display:flex; justify-content:space-between; gap:6px;";
+    const rowContainer = document.createElement("div"); rowContainer.style.cssText = "display:flex; justify-content:space-between; gap:8px;";
     
     [50, 100, 300].forEach(val => {
-      const btn = document.createElement("button"); btn.innerText = val; btn.style.cssText = "flex:1; padding:8px 0; border-radius:10px; border:1px solid "+THEME.BORDER+"; background:rgba(255,255,255,0.02); cursor:pointer; font-size:11px; font-weight:600; color:"+THEME.TEXT;
+      const btn = document.createElement("button"); btn.innerText = val; btn.style.cssText = "flex:1; padding:8px 0; border-radius:10px; border:1px solid "+THEME.BORDER+"; background:rgba(255,255,255,0.02); cursor:pointer; font-size:12px; font-weight:600; color:"+THEME.TEXT;
       btn.onmouseenter = () => btn.style.background = "rgba(255,255,255,0.06)";
       btn.onmouseleave = () => btn.style.background = "rgba(255,255,255,0.02)";
       btn.onclick = () => {
