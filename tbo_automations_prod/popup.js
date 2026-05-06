@@ -13,6 +13,39 @@ function setStatus(msg, cls = "") {
   statusEl.textContent = msg || "";
 }
 
+function renderHeaderVersion() {
+  const versionText = `Version ${chrome.runtime.getManifest().version}`;
+
+  const existing = document.querySelector("#extensionVersionHeader");
+  if (existing) {
+    existing.textContent = versionText;
+    return;
+  }
+
+  const candidates = Array.from(document.querySelectorAll("h1, h2, h3, .title, .header, [class*='title'], [class*='header']"));
+  const titleEl = candidates.find((el) => (el.textContent || "").trim() === "Automations");
+
+  if (!titleEl || !titleEl.parentElement) return;
+
+  const parent = titleEl.parentElement;
+
+  parent.style.display = "flex";
+  parent.style.alignItems = "center";
+  parent.style.justifyContent = "space-between";
+  parent.style.gap = "12px";
+
+  const versionEl = document.createElement("div");
+  versionEl.id = "extensionVersionHeader";
+  versionEl.textContent = versionText;
+  versionEl.style.fontSize = "11px";
+  versionEl.style.fontWeight = "500";
+  versionEl.style.color = "rgba(230,232,238,0.55)";
+  versionEl.style.whiteSpace = "nowrap";
+  versionEl.style.userSelect = "none";
+
+  parent.appendChild(versionEl);
+}
+
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
@@ -174,6 +207,8 @@ function renderAutomationRow(a) {
 }
 
 async function refresh() {
+  renderHeaderVersion();
+
   setStatus("", "");
   listEl.innerHTML = "";
 
