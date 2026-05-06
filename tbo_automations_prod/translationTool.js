@@ -20,6 +20,7 @@
   const norm = (s) => stripAccents(s || "").trim().toLowerCase();
 
   const LANGUAGE_ALIASES = {
+    en_GB: ["british english", "uk english", "english uk", "english (uk)", "english - uk", "en-gb", "en_gb"],
     en_CA: ["canadian english", "canada english", "english canada", "english (canada)", "english - canada", "en-ca", "en_ca"],
     en: ["english", "ingles", "inglés"],
     da: ["danish", "dansk"],
@@ -34,7 +35,7 @@
   let SHEET_LANG_KEYS = new Set(["da", "fi", "pt", "sv", "fr"]);
 
   function detectLanguageKey(labelText) {
-    const text = norm(labelText);
+    const text = norm(labelText).replace(/\s+/g, " ");
     if (!text) return null;
 
     const orderedKeys = Object.keys(LANGUAGE_ALIASES).sort((a, b) => {
@@ -45,7 +46,13 @@
 
     for (const langKey of orderedKeys) {
       const aliases = LANGUAGE_ALIASES[langKey] || [];
-      if (aliases.some((alias) => text.includes(norm(alias)))) return langKey;
+      if (aliases.some((alias) => text === norm(alias).replace(/\s+/g, " "))) return langKey;
+    }
+
+    for (const langKey of orderedKeys) {
+      if (langKey === SOURCE_LANG) continue;
+      const aliases = LANGUAGE_ALIASES[langKey] || [];
+      if (aliases.some((alias) => text.includes(norm(alias).replace(/\s+/g, " ")))) return langKey;
     }
 
     return null;
@@ -81,8 +88,12 @@
   }
 
   function detectLangFromRow(row) {
+    const label = row.querySelector('[data-testid*="row-label"]');
+    const fromLabel = detectLanguageKey(label?.textContent || "");
+    if (fromLabel) return fromLabel;
+
     const clone = row.cloneNode(true);
-    clone.querySelectorAll("input, textarea").forEach((el) => el.remove());
+    clone.querySelectorAll("input, textarea, button").forEach((el) => el.remove());
     return detectLanguageKey(clone.textContent || "");
   }
 
@@ -96,7 +107,7 @@
     for (const row of rows) {
       const lang = detectLangFromRow(row);
       const input = row.querySelector("input, textarea");
-      if (lang && input) map[lang] = input;
+      if (lang && input && !map[lang]) map[lang] = input;
     }
 
     return map;
@@ -332,6 +343,7 @@
     changedIndexes: [],
     storedValues: {
       en: "",
+      en_GB: "",
       en_CA: "",
       da: "",
       fi: "",
@@ -1115,7 +1127,12 @@ ${text}
 
       for (const [lang, field] of Object.entries(fields)) {
         if (!field || lang === SOURCE_LANG) continue;
-        setNativeValue(field, result?.[lang] || "");
+
+        const translatedValue = result?.[lang];
+        if (translatedValue == null || String(translatedValue).trim() === "") continue;
+        if (norm(normalizeDashSpacing(translatedValue)) === norm(normalizeDashSpacing(enText))) continue;
+
+        setNativeValue(field, translatedValue);
       }
 
       if (result.error) {
@@ -1154,6 +1171,7 @@ ${text}
 
       const paramKeyByLang = {
         en: "en",
+        en_GB: "en_GB",
         en_CA: "en_CA",
         da: "da",
         fi: "fi",
