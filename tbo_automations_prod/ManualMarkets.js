@@ -47,51 +47,52 @@
 
         /* --- Header --- */
         .tbo-header {
-            background-color: #13161D;
-            padding: 12px 16px;
+            height: 36px;
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
+            justify-content: space-between;
+            padding: 0 10px;
             cursor: grab;
             user-select: none;
+            background: linear-gradient(90deg, rgba(240,166,74,0.18), rgba(240,166,74,0.04));
+            border-bottom: 1px solid rgba(255,255,255,0.10);
         }
         .tbo-header:active {
             cursor: grabbing;
         }
 
         .tbo-title {
-            font-size: 13px;
-            font-weight: 600;
+            font-size: 12px;
+            font-weight: 650;
             color: #E6E8EE;
-            letter-spacing: 0.3px;
+            letter-spacing: .2px;
         }
 
         .tbo-controls {
             display: flex;
-            gap: 8px;
+            gap: 6px;
         }
 
         .tbo-ctrl-btn {
-            background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.1);
-            color: rgba(230,232,238,0.65);
-            width: 24px;
-            height: 24px;
-            border-radius: 6px;
+            width: 26px;
+            height: 22px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.10);
+            background: rgba(255,255,255,0.02);
+            color: #E6E8EE;
+            font-weight: 650;
+            cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            cursor: pointer;
-            font-size: 12px;
-            transition: all 0.2s;
             padding: 0;
             line-height: 1;
+            font-size: 12px;
         }
 
         .tbo-ctrl-btn:hover {
-            background: rgba(255,255,255,0.08);
-            color: #FFF;
+            background: rgba(255,255,255,0.02);
+            color: #E6E8EE;
         }
 
         /* --- Body --- */
@@ -181,7 +182,7 @@
         <div class="tbo-header" id="tbo-header-drag">
             <span class="tbo-title">Manual Markets</span>
             <div class="tbo-controls">
-                <button class="tbo-ctrl-btn" id="tbo-btn-min" title="Minimize">－</button>
+                <button class="tbo-ctrl-btn" id="tbo-btn-min" title="Minimize">−</button>
                 <button class="tbo-ctrl-btn" id="tbo-btn-close" title="Close">✕</button>
             </div>
         </div>
@@ -359,6 +360,8 @@
         let startX, startY, initialLeft, initialTop;
 
         header.addEventListener("mousedown", (e) => {
+          if (e.target && e.target.closest && e.target.closest("button")) return;
+
           isDragging = true;
           startX = e.clientX;
           startY = e.clientY;
