@@ -12,13 +12,16 @@
       "Sweden/Expekt",
       "Sweden/LeoVegas",
       "Brazil/BetMGM",
-      "Canada/LeoVegas",
-      "Finland/Expekt"
+      "Finland/Expekt",
+      "United Kingdom/LeoVegas",
+      "United Kingdom/BetMGM",
+      "United Kingdom/BetUK"
     ];
 
     const DENMARK_BRANDS = [
       "Denmark/Expekt",
-      "Denmark/LeoVegas"
+      "Denmark/LeoVegas",
+      "Canada/LeoVegas"
     ];
 
     const DEFAULT_MIN_ODDS = "1.5";
@@ -231,9 +234,7 @@
     // UI System (Floating Panels)
     // =========================
     const IMG_LIGHTNING = `<img alt="lighting icon" data-testid="lighting-icon" src="/39c1bcabd331ff1837b6.svg" style="width:18px;height:18px;display:block;">`;
-    const SVG_MINIMIZE = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg>`;
-    const SVG_CLOSE = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>`;
-
+    
     const injectStyles = () => {
       if (document.getElementById("creatorboost-style-tag")) return;
       const styleTag = document.createElement("style");
@@ -368,7 +369,6 @@
 
       const panel = document.createElement("div");
       panel.className = "cb-floating-panel";
-      // Position center initially
       panel.style.left = `${window.innerWidth / 2 - 310}px`;
       panel.style.top = `100px`;
 
@@ -392,7 +392,6 @@
 
       const bodyEl = panel.querySelector('#cb-dynamic-body');
       
-      // Window Controls
       panel.querySelector('#cb-win-min').onclick = () => {
         bodyEl.style.display = bodyEl.style.display === 'none' ? 'block' : 'none';
       };
@@ -401,14 +400,13 @@
         const closePanel = () => { container.remove(); resolve(null); };
         panel.querySelector('#cb-win-close').onclick = closePanel;
 
-        // STEP 1: Select Region
         const renderStep1 = () => {
           bodyEl.innerHTML = `
             <div style="font-size: 12px; margin-bottom: 12px; color: rgba(230,232,238,0.65); text-align: center;">
               Select the regulation for this boost session:
             </div>
             <div class="cb-btn-row" style="flex-direction: column; gap: 12px; margin-top: 5px;">
-              <button id="cb-btn-denmark" class="cb-btn cb-btn-primary">Boost Denmark</button>
+              <button id="cb-btn-denmark" class="cb-btn cb-btn-primary">Boost Denmark/Canada</button>
               <button id="cb-btn-multi" class="cb-btn cb-btn-primary">Boost Multibrands</button>
             </div>
           `;
@@ -416,9 +414,7 @@
           bodyEl.querySelector('#cb-btn-multi').onclick = () => renderStep2('multibrands');
         };
 
-        // STEP 2: Main Config
         const renderStep2 = (region) => {
-          // Filtrar marcas según selección
           const brandsToShow = region === 'denmark' ? DENMARK_BRANDS : MULTIBRANDS_BRANDS;
 
           bodyEl.innerHTML = `
@@ -521,7 +517,6 @@
             </div>
           `;
 
-          // Bind interactions for step 2
           const accBtn = bodyEl.querySelector("#cb-eventtiming-acc");
           accBtn.onclick = () => accBtn.setAttribute("aria-expanded", accBtn.getAttribute("aria-expanded") === "true" ? "false" : "true");
 
@@ -569,7 +564,7 @@
 
             container.remove();
             resolve({
-              region, // 'denmark' o 'multibrands'
+              region, 
               brands: checkedBrands,
               minOdds: String(min), maxOdds: String(max), boostType: bType,
               boostMainValue: String(boostMainValue), maxStakeLimit: String(maxStake), totalStakeLimit: String(totalStake),
@@ -579,7 +574,7 @@
           };
         };
 
-        renderStep1(); // Init with step 1
+        renderStep1();
       });
     };
 
@@ -637,7 +632,7 @@
     };
 
     // =========================
-    // Extractor de Probabilidades Universal (.reduce)
+    // Extractor de Probabilidades Universal
     // =========================
     const extractProbabilityAndOddsFromTheoreticalPayload = (payload) => {
       const root = Array.isArray(payload) ? payload[0] : payload;
@@ -729,16 +724,43 @@
       for (const b of brands) {
         const opt = await waitFor(() => Array.from(lb.querySelectorAll('li[role="option"], li')).filter(isVisible).find(o => norm(o.textContent).includes(norm(b))), { timeout: 2500, interval: 120 });
         if (!opt) continue;
-        clickEl(opt.querySelector('input[type="checkbox"]')?.closest("span,button,div") || opt.querySelector(".MuiCheckbox-root") || opt);
-        await sleep(220);
+        
+        // REVISIÓN CLAVE: Verificar si la marca YA ESTÁ seleccionada para no desmarcarla sin querer.
+        const checkbox = opt.querySelector('input[type="checkbox"]');
+        const isChecked = (checkbox && checkbox.checked) || 
+                          opt.getAttribute("aria-selected") === "true" || 
+                          opt.classList.contains("Mui-selected") ||
+                          !!opt.querySelector('.Mui-checked');
+
+        if (!isChecked) {
+          clickEl(checkbox?.closest("span,button,div") || opt.querySelector(".MuiCheckbox-root") || opt);
+          await sleep(250);
+        }
       }
       return true;
     };
+
     const closeBrandsByClickingMinOdds = async (dialog) => {
       const minInput = dialog.querySelector("#input-minimumOdds") || dialog.querySelector('input[id*="minimumOdds"]');
-      if (!minInput) return false;
-      await clickInputHuman(minInput);
-      if (isAnyListboxOpen()) { await sendEscape(); await clickInputHuman(minInput); }
+      if (minInput) {
+        await clickInputHuman(minInput);
+        await sleep(300);
+      }
+      
+      // REVISIÓN CLAVE: Ya NO mandamos "Escape". En los selectores múltiples de Material-UI,
+      // la tecla Escape equivale a "Cancelar cambios" y revierte las selecciones que acabamos de hacer.
+      // Ahora confirmamos (blur) dándole clic al título del diálogo.
+      if (isAnyListboxOpen()) {
+        const title = dialog.querySelector('.MuiDialogTitle-root, h2') || dialog;
+        try { clickEl(title); } catch {}
+        await sleep(300);
+        
+        if (isAnyListboxOpen()) {
+            const r = dialog.getBoundingClientRect();
+            clickByPoint(r.left + 5, r.top + 5);
+            await sleep(300);
+        }
+      }
       return true;
     };
 
@@ -898,16 +920,14 @@
         const minAccept10 = baseSyncOddForTM * (1 + MIN_ACCEPTABLE_BOOST_PCT / 100);
         const tmRaw15 = 100 * (1 - probabilityForTM * goal15);
         
-        // APLICACIÓN DE LA NUEVA REGLA (Multibrands vs Denmark)
         if (cfg.region === 'multibrands') {
-            tmUsedForBoost = trunc2(tmRaw15); // Permite negativos (antigua lógica multibrands/brazil)
-        } else { // 'denmark'
-            tmUsedForBoost = tmRaw15 < TARGET_MARGIN_MIN ? TARGET_MARGIN_MIN : trunc2(tmRaw15); // Capped at 0.01
+            tmUsedForBoost = trunc2(tmRaw15); 
+        } else { 
+            tmUsedForBoost = tmRaw15 < TARGET_MARGIN_MIN ? TARGET_MARGIN_MIN : trunc2(tmRaw15); 
         }
 
         const oddFinalByTM = trunc2((1 - tmUsedForBoost / 100) / probabilityForTM);
         
-        // Solo aplica el skip y la validación de TARGET_MARGIN_MIN para Dinamarca
         if (cfg.region === 'denmark' && tmUsedForBoost === TARGET_MARGIN_MIN && oddFinalByTM < minAccept10) {
           __results.skipped.push({ eventName: eventNameFromTech, betslipUuid: betslipUuidFromTech, marginPct: ((oddFinalByTM / baseSyncOddForTM) - 1) * 100 });
           return false;
@@ -967,9 +987,8 @@
       
       try { 
         await applyShowOnHomepage(dialog, !!cfg.showOnHomepage);
-        await sleep(250); // Darle tiempo a la UI del TBO para revelar "Priority"
+        await sleep(250);
         
-        // Inyectar Priority si se solicitó mostrar en homepage y tiene valor
         if (cfg.showOnHomepage && cfg.priority) {
             const priorityInput = findInputByLabelText(dialog, "Priority") || dialog.querySelector('input[name="priority"], #priority');
             if (priorityInput) {
