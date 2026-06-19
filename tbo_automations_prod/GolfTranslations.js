@@ -8,9 +8,11 @@
     async () => {
       try {
         // =========================
-        // CONFIG
+        // CONFIG & APPS SCRIPT URL
         // =========================
-        const LANGS = ["Danish", "Finnish", "Portuguese", "Swedish"];
+        const SHEET_URL = "https://script.google.com/a/macros/leovegas.com/s/AKfycbwQciKPzzRlTV-rpYPm_FA2yJOMcjX8cjiBCpuoAKt9otCLaEQfyPdXDj_tDn_W1j-1CA/exec"; // <-- REEMPLAZA CON TU URL
+        const LANGS = ["Danish", "Finnish", "Portuguese", "Swedish", "French", "British English", "Canadian English"];
+        const CACHE_KEY = "tbo_golf_translations_automated_cache";
 
         // =========================
         // THEME (same as other tools)
@@ -28,7 +30,7 @@
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
         // =========================
-        // UI: Floating panel with custom file picker (draggable / minimize / close)
+        // UI: Floating panel (draggable / minimize / close)
         // =========================
         function openWorkPanel() {
           return new Promise((resolve) => {
@@ -66,7 +68,7 @@
             header.style.borderBottom = `1px solid ${BORDER}`;
 
             const title = document.createElement("div");
-            title.textContent = "Translations Assistant";
+            title.textContent = "Golf Translations";
             title.style.fontWeight = "650";
             title.style.fontSize = "12px";
             title.style.letterSpacing = ".2px";
@@ -74,6 +76,21 @@
             const btns = document.createElement("div");
             btns.style.display = "flex";
             btns.style.gap = "6px";
+
+            const syncBtn = document.createElement("button");
+            syncBtn.title = "Sync with Google Sheet Database";
+            syncBtn.textContent = "🔄";
+            syncBtn.style.width = "26px";
+            syncBtn.style.height = "22px";
+            syncBtn.style.borderRadius = "8px";
+            syncBtn.style.border = `1px solid ${BORDER}`;
+            syncBtn.style.background = "rgba(255,255,255,0.02)";
+            syncBtn.style.color = TEXT;
+            syncBtn.style.cursor = "pointer";
+            syncBtn.style.display = "flex";
+            syncBtn.style.alignItems = "center";
+            syncBtn.style.justifyContent = "center";
+            syncBtn.style.fontSize = "11px";
 
             const minBtn = document.createElement("button");
             minBtn.title = "Minimize";
@@ -99,6 +116,7 @@
             closeBtn.style.fontWeight = "650";
             closeBtn.style.cursor = "pointer";
 
+            btns.appendChild(syncBtn);
             btns.appendChild(minBtn);
             btns.appendChild(closeBtn);
 
@@ -109,96 +127,20 @@
             const body = document.createElement("div");
             body.style.padding = "10px";
 
-            // Card
-            const card = document.createElement("div");
-            card.style.background = "rgba(255,255,255,0.02)";
-            card.style.border = `1px solid ${BORDER}`;
-            card.style.borderRadius = `${RADIUS}px`;
-            card.style.padding = "10px";
-            card.style.display = "flex";
-            card.style.flexDirection = "column";
-            card.style.gap = "8px";
-            card.addEventListener("mouseenter", () => {
-              card.style.border = `1px solid ${BORDER2}`;
-              card.style.background = "rgba(255,255,255,0.03)";
-            });
-            card.addEventListener("mouseleave", () => {
-              card.style.border = `1px solid ${BORDER}`;
-              card.style.background = "rgba(255,255,255,0.02)";
-            });
-
-            const label = document.createElement("div");
-            label.textContent = "CSV file";
-            label.style.fontSize = "11px";
-            label.style.color = MUTED;
-            label.style.fontWeight = "600";
-
-            // Hidden file input
-            const fileInput = document.createElement("input");
-            fileInput.type = "file";
-            fileInput.accept = ".csv";
-            fileInput.style.position = "absolute";
-            fileInput.style.left = "-99999px";
-            fileInput.style.opacity = "0";
-
-            // Custom picker row
-            const pickerRow = document.createElement("div");
-            pickerRow.style.display = "grid";
-            pickerRow.style.gridTemplateColumns = "120px 1fr";
-            pickerRow.style.gap = "10px";
-            pickerRow.style.alignItems = "center";
-
-            const chooseBtn = document.createElement("button");
-            chooseBtn.type = "button";
-            chooseBtn.textContent = "Choose file";
-            chooseBtn.style.cursor = "pointer";
-            chooseBtn.style.border = `1px solid ${BORDER}`;
-            chooseBtn.style.background = "rgba(255,255,255,0.03)";
-            chooseBtn.style.color = TEXT;
-            chooseBtn.style.borderRadius = "12px";
-            chooseBtn.style.padding = "9px 10px";
-            chooseBtn.style.fontWeight = "650";
-            chooseBtn.style.fontSize = "12px";
-            chooseBtn.addEventListener("mouseenter", () => {
-              chooseBtn.style.border = `1px solid ${BORDER2}`;
-              chooseBtn.style.background = "rgba(255,255,255,0.05)";
-            });
-            chooseBtn.addEventListener("mouseleave", () => {
-              chooseBtn.style.border = `1px solid ${BORDER}`;
-              chooseBtn.style.background = "rgba(255,255,255,0.03)";
-            });
-
-            const fileName = document.createElement("div");
-            fileName.textContent = "No file selected";
-            fileName.style.fontSize = "11px";
-            fileName.style.color = MUTED;
-            fileName.style.padding = "9px 10px";
-            fileName.style.borderRadius = "12px";
-            fileName.style.border = `1px solid ${BORDER}`;
-            fileName.style.background = "rgba(255,255,255,0.02)";
-            fileName.style.whiteSpace = "nowrap";
-            fileName.style.overflow = "hidden";
-            fileName.style.textOverflow = "ellipsis";
-
-            chooseBtn.onclick = () => fileInput.click();
-            fileInput.addEventListener("change", () => {
-              const f = fileInput.files && fileInput.files[0];
-              fileName.textContent = f ? f.name : "No file selected";
-              fileName.style.color = f ? TEXT : MUTED;
-            });
-
-            pickerRow.appendChild(chooseBtn);
-            pickerRow.appendChild(fileName);
-
-            // Error
+            // Error Area
             const error = document.createElement("div");
-            error.style.marginTop = "8px";
+            error.style.marginBottom = "8px";
             error.style.fontSize = "11px";
             error.style.color = "#ff8181";
             error.style.display = "none";
+            error.style.padding = "6px";
+            error.style.borderRadius = "8px";
+            error.style.background = "rgba(255,255,255,0.01)";
+            error.style.border = `1px solid ${BORDER}`;
 
-            const setError = (msg) => {
+            const setError = (msg, isSuccess = false) => {
               error.textContent = msg || "";
+              error.style.color = isSuccess ? "#81ff9d" : "#ff8181";
               error.style.display = msg ? "block" : "none";
             };
 
@@ -206,7 +148,6 @@
             const runBtn = document.createElement("button");
             runBtn.type = "button";
             runBtn.textContent = "Run";
-            runBtn.style.marginTop = "10px";
             runBtn.style.width = "100%";
             runBtn.style.cursor = "pointer";
             runBtn.style.border = "none";
@@ -223,7 +164,33 @@
               runBtn.style.background = `linear-gradient(180deg, rgba(240,166,74,0.95), rgba(200,133,51,0.95))`;
             });
 
+            let popupWindow = null;
+
+            const onMessageReceived = (e) => {
+              if (e.data && e.data.source === "tbo-golf-translation" && e.data.action === "sync") {
+                if (popupWindow && !popupWindow.closed) {
+                  popupWindow.close();
+                  popupWindow = null;
+                }
+                const rows = e.data.data;
+                if (rows && rows.length > 0) {
+                  localStorage.setItem(CACHE_KEY, JSON.stringify(rows));
+                  setError(`✅ Sincronización completa: Base de datos cargada.`, true);
+                } else {
+                  setError("Error: El documento parece estar vacío.");
+                }
+              }
+            };
+            window.addEventListener("message", onMessageReceived);
+
+            syncBtn.onclick = () => {
+              setError("Sincronizando con base de datos en línea...", true);
+              if (popupWindow && !popupWindow.closed) popupWindow.close();
+              popupWindow = window.open(SHEET_URL, "tbo_golf_sync", "width=400,height=300,left=200,top=200");
+            };
+
             const cleanup = () => {
+              window.removeEventListener("message", onMessageReceived);
               document.removeEventListener("keydown", onKeyDown);
               panel.remove();
             };
@@ -232,32 +199,28 @@
               runBtn.disabled = true;
               runBtn.style.opacity = "0.85";
               runBtn.style.cursor = "default";
-              chooseBtn.disabled = true;
-              chooseBtn.style.opacity = "0.65";
-              chooseBtn.style.cursor = "default";
               minBtn.disabled = true;
               closeBtn.disabled = true;
+              syncBtn.disabled = true;
             };
 
             runBtn.onclick = () => {
               setError("");
-              const file = fileInput.files && fileInput.files[0];
-              if (!file) {
-                setError("Please choose a CSV file.");
+              const cachedData = localStorage.getItem(CACHE_KEY);
+              if (!cachedData) {
+                setError("No hay datos cargados en caché. Haz clic en 🔄 para sincronizar primero.");
                 return;
               }
               disableControls();
               cleanup();
-              resolve({ ok: true, file });
+              resolve({ ok: true, matrixRows: JSON.parse(cachedData) });
             };
 
-            // Close / cancel
             closeBtn.onclick = () => {
               cleanup();
               resolve({ ok: false, cancelled: true });
             };
 
-            // Minimize
             let minimized = false;
             minBtn.onclick = () => {
               minimized = !minimized;
@@ -265,7 +228,6 @@
               minBtn.textContent = minimized ? "+" : "−";
             };
 
-            // ESC closes
             function onKeyDown(e) {
               if (e.key === "Escape") {
                 cleanup();
@@ -274,12 +236,9 @@
             }
             document.addEventListener("keydown", onKeyDown);
 
-            // Drag
-            let dragging = false,
-              offsetX = 0,
-              offsetY = 0;
-
+            let dragging = false, offsetX = 0, offsetY = 0;
             header.addEventListener("mousedown", (e) => {
+              if (e.target.tagName === "BUTTON") return;
               dragging = true;
               header.style.cursor = "grabbing";
               const rect = panel.getBoundingClientRect();
@@ -292,10 +251,7 @@
               "mousemove",
               (e) => {
                 if (!dragging) return;
-                const x = Math.max(
-                  0,
-                  Math.min(window.innerWidth - panel.offsetWidth, e.clientX - offsetX)
-                );
+                const x = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, e.clientX - offsetX));
                 const y = Math.max(0, Math.min(window.innerHeight - 40, e.clientY - offsetY));
                 panel.style.left = `${x}px`;
                 panel.style.top = `${y}px`;
@@ -314,12 +270,6 @@
               { passive: true }
             );
 
-            // Compose
-            card.appendChild(label);
-            card.appendChild(fileInput);
-            card.appendChild(pickerRow);
-
-            body.appendChild(card);
             body.appendChild(error);
             body.appendChild(runBtn);
 
@@ -399,44 +349,26 @@
           document.body.appendChild(overlay);
         }
 
-        // =========================
-        // Start: CSV selection
-        // =========================
         const modalResult = await openWorkPanel();
-        if (!modalResult || !modalResult.ok || !modalResult.file) {
+        if (!modalResult || !modalResult.ok || !modalResult.matrixRows) {
           return { ok: false, error: "Cancelled by user." };
         }
 
-        const csvText = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = (e) => resolve(e.target.result);
-          reader.readAsText(modalResult.file);
-        });
+        const rowsData = modalResult.matrixRows;
 
-        if (!csvText) {
-          console.error("CSV file could not be read. Aborting.");
-          return { ok: false, error: "CSV file could not be read." };
-        }
-
-        // =========================
-        // Core logic (UNCHANGED)
-        // =========================
-        function parseCSV(str) {
-          const lines = str.trim().split("\n");
-          const headers = lines[0].split(",");
-          const rows = lines.slice(1).map((l) => l.split(","));
-          const res = {};
-          for (const row of rows) {
-            const obj = {};
-            headers.forEach(
-              (h, i) => (obj[h.trim()] = row[i] !== undefined ? row[i].trim() : "")
-            );
-            res[obj["Suffix_EN"]] = obj;
+        const headers = rowsData[0];
+        const translations = {};
+        for (let i = 1; i < rowsData.length; i++) {
+          const row = rowsData[i];
+          if (!row || row.length === 0) continue;
+          const obj = {};
+          headers.forEach((h, idx) => {
+            if (h) obj[String(h).trim()] = row[idx] !== undefined ? String(row[idx]).trim() : "";
+          });
+          if (obj["Suffix_EN"]) {
+            translations[obj["Suffix_EN"]] = obj;
           }
-          return res;
         }
-
-        const translations = parseCSV(csvText);
 
         function extractSuffix(fullName) {
           const parts = fullName.split(" - ");
@@ -696,6 +628,12 @@
                   '[data-testid="multilanguage-translations-popup-cancel-button"]'
                 );
 
+                // PROTECCIÓN ACCESIBILIDAD: Desvincular foco antes de cerrar
+                if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                  document.activeElement.blur();
+                }
+                await sleep(100);
+
                 if (changed && saveBtn && !saveBtn.disabled) saveBtn.click();
                 else cancelBtn?.click();
 
@@ -703,6 +641,7 @@
                   if (!document.querySelector('[data-testid="dialog-popup-title"]')) break;
                   await sleep(100);
                 }
+                await sleep(400); // Margen de gracia para animaciones Mui
               }
             }
           }
@@ -782,8 +721,24 @@
                         const saveSubtype = dialog.querySelector(
                           '[data-testid="editWithAcceptSaveBtn"]'
                         );
+
+                        // PROTECCIÓN ACCESIBILIDAD: Desvincular foco antes de cerrar subtipo
+                        if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                          document.activeElement.blur();
+                        }
+                        await sleep(100);
+
                         if (saveSubtype && !saveSubtype.disabled) saveSubtype.click();
                         else dialog.querySelector('[data-testid="editWithAcceptCancelBtn"]')?.click();
+                        
+                        // Esperar a que desmonte el modal de subtipo
+                        for (let k = 0; k < 20; k++) {
+                          const dlg = document.querySelector('[role="dialog"]');
+                          const t = dlg?.querySelector('[data-testid="dialog-popup-title"] span')?.textContent;
+                          if (!dlg || !t || !t.toLowerCase().includes("edit subtype")) break;
+                          await sleep(100);
+                        }
+                        await sleep(400);
                       } else {
                         dialog.querySelector('[data-testid="editWithAcceptCancelBtn"]')?.click();
                       }
@@ -874,11 +829,24 @@
                           const saveSubtype = dialog.querySelector(
                             '[data-testid="editWithAcceptSaveBtn"]'
                           );
+
+                          // PROTECCIÓN ACCESIBILIDAD: Desvincular foco antes de cerrar subtipo
+                          if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                            document.activeElement.blur();
+                          }
+                          await sleep(100);
+
                           if (saveSubtype && !saveSubtype.disabled) saveSubtype.click();
-                          else
-                            dialog
-                              .querySelector('[data-testid="editWithAcceptCancelBtn"]')
-                              ?.click();
+                          else dialog.querySelector('[data-testid="editWithAcceptCancelBtn"]')?.click();
+                          
+                          // Esperar a que desmonte el modal de subtipo
+                          for (let k = 0; k < 20; k++) {
+                            const dlg = document.querySelector('[role="dialog"]');
+                            const t = dlg?.querySelector('[data-testid="dialog-popup-title"] span')?.textContent;
+                            if (!dlg || !t || !t.toLowerCase().includes("edit subtype")) break;
+                            await sleep(100);
+                          }
+                          await sleep(400);
                         } else {
                           dialog.querySelector('[data-testid="editWithAcceptCancelBtn"]')?.click();
                         }
@@ -966,8 +934,24 @@
                         const saveSubtype = dialog.querySelector(
                           '[data-testid="editWithAcceptSaveBtn"]'
                         );
+
+                        // PROTECCIÓN ACCESIBILIDAD: Desvincular foco antes de cerrar subtipo
+                        if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                          document.activeElement.blur();
+                        }
+                        await sleep(100);
+
                         if (saveSubtype && !saveSubtype.disabled) saveSubtype.click();
                         else dialog.querySelector('[data-testid="editWithAcceptCancelBtn"]')?.click();
+                        
+                        // Esperar a que desmonte el modal de subtipo
+                        for (let k = 0; k < 20; k++) {
+                          const dlg = document.querySelector('[role="dialog"]');
+                          const t = dlg?.querySelector('[data-testid="dialog-popup-title"] span')?.textContent;
+                          if (!dlg || !t || !t.toLowerCase().includes("edit subtype")) break;
+                          await sleep(100);
+                        }
+                        await sleep(400);
                       } else {
                         dialog.querySelector('[data-testid="editWithAcceptCancelBtn"]')?.click();
                       }
@@ -998,5 +982,3 @@
     }
   );
 })();
-
-
