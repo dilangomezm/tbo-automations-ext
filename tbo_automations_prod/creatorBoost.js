@@ -105,8 +105,9 @@
     };
 
     const sendEscape = async () => {
-      const ev = new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true });
-      document.dispatchEvent(ev);
+      const target = document.activeElement || document.body;
+      const ev = new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true });
+      target.dispatchEvent(ev);
       await sleep(120);
     };
 
@@ -725,7 +726,6 @@
         const opt = await waitFor(() => Array.from(lb.querySelectorAll('li[role="option"], li')).filter(isVisible).find(o => norm(o.textContent).includes(norm(b))), { timeout: 2500, interval: 120 });
         if (!opt) continue;
         
-        // REVISIÓN CLAVE: Verificar si la marca YA ESTÁ seleccionada para no desmarcarla sin querer.
         const checkbox = opt.querySelector('input[type="checkbox"]');
         const isChecked = (checkbox && checkbox.checked) || 
                           opt.getAttribute("aria-selected") === "true" || 
@@ -735,30 +735,6 @@
         if (!isChecked) {
           clickEl(checkbox?.closest("span,button,div") || opt.querySelector(".MuiCheckbox-root") || opt);
           await sleep(250);
-        }
-      }
-      return true;
-    };
-
-    const closeBrandsByClickingMinOdds = async (dialog) => {
-      const minInput = dialog.querySelector("#input-minimumOdds") || dialog.querySelector('input[id*="minimumOdds"]');
-      if (minInput) {
-        await clickInputHuman(minInput);
-        await sleep(300);
-      }
-      
-      // REVISIÓN CLAVE: Ya NO mandamos "Escape". En los selectores múltiples de Material-UI,
-      // la tecla Escape equivale a "Cancelar cambios" y revierte las selecciones que acabamos de hacer.
-      // Ahora confirmamos (blur) dándole clic al título del diálogo.
-      if (isAnyListboxOpen()) {
-        const title = dialog.querySelector('.MuiDialogTitle-root, h2') || dialog;
-        try { clickEl(title); } catch {}
-        await sleep(300);
-        
-        if (isAnyListboxOpen()) {
-            const r = dialog.getBoundingClientRect();
-            clickByPoint(r.left + 5, r.top + 5);
-            await sleep(300);
         }
       }
       return true;
@@ -775,13 +751,11 @@
       const needle = norm(map[raw] || raw);
       if (norm(combo.textContent).includes(needle)) return true;
 
-      for (let i = 0; i < 3; i++) { if (!isAnyListboxOpen()) break; await sendEscape(); await sleep(180); }
-
       const tryOpen = async () => {
         try { const r = combo.getBoundingClientRect(); clickByPoint(Math.floor(r.left + r.width / 2), Math.floor(r.top + r.height / 2)); } catch {}
         await sleep(200);
-        if (!isAnyListboxOpen()) { try { clickEl(combo); } catch {} await sleep(200); }
-        if (!isAnyListboxOpen()) { try { clickEl(boostWrapper); } catch {} await sleep(200); }
+        try { clickEl(combo); } catch {} await sleep(200);
+        try { clickEl(boostWrapper); } catch {} await sleep(200);
       };
 
       for (let attempt = 1; attempt <= 4; attempt++) {
@@ -794,14 +768,14 @@
             return null;
           }, { timeout: 2500, interval: 120 }
         );
-        if (!lb) { await sendEscape(); await sleep(160); continue; }
+        if (!lb) { await sendEscape(); await sleep(200); continue; }
 
         const targetOpt = Array.from(lb.querySelectorAll('li[role="option"], li')).filter(isVisible).find((o) => norm(o.textContent).includes(needle));
-        if (!targetOpt) { await sendEscape(); await sleep(160); continue; }
+        if (!targetOpt) { await sendEscape(); await sleep(200); continue; }
 
         clickEl(targetOpt); await sleep(250);
         if (await waitFor(() => (norm(combo.textContent).includes(needle) ? true : null), { timeout: 2500, interval: 120 })) return true;
-        await sendEscape(); await sleep(160);
+        await sendEscape(); await sleep(200);
       }
       return false;
     };
@@ -943,7 +917,25 @@
       const okBrands = await selectBrandsByVisibleText(dialog, cfg.brands);
       if (!okBrands) return false;
 
-      await closeBrandsByClickingMinOdds(dialog);
+      // FORZAR CIERRE DE LISTA DE MARCAS CON ESCAPE
+      await sleep(200); 
+      let escapeAttempts = 0;
+      while (isAnyListboxOpen() && escapeAttempts < 5) {
+          escapeAttempts++;
+          console.log(`[CreatorBoost] Cerrando marcas con Escape (intento ${escapeAttempts})...`);
+          await sendEscape();
+          await sleep(250); 
+      }
+
+      // VALIDACIÓN ESTRICTA: SI SIGUE ABIERTO, NO CONTINUAR
+      if (isAnyListboxOpen()) {
+          console.error("[CreatorBoost] FALLO CRÍTICO: La ventana de selección de marcas sigue abierta después de 5 intentos con Escape. Abortando este boost para evitar clics erróneos.");
+          return false;
+      }
+      
+      // Delay de 0.5 segundos post cierre de marcas
+      await sleep(500); 
+
       const inputMin = dialog.querySelector("#input-minimumOdds") || dialog.querySelector('input[id*="minimumOdds"]');
       const inputMax = dialog.querySelector("#input-maximumOdds") || dialog.querySelector('input[id*="maximumOdds"]');
       if (!inputMin || !inputMax) return false;
