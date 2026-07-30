@@ -63,8 +63,13 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
   const findOptionInListbox = (lb, containsOrExact) => {
     const opts = Array.from(lb.querySelectorAll('li[role="option"], li')).filter(isVisible);
     const needle = norm(containsOrExact);
-    let opt = opts.find((o) => norm(o.textContent) === needle);
+    // Prioridad 1: match exacto por data-value (el código interno, p.ej. NO_RESULT_ASSIGNABLE)
+    let opt = opts.find((o) => norm(o.getAttribute("data-value")) === needle);
     if (opt) return opt;
+    // Prioridad 2: match exacto por texto
+    opt = opts.find((o) => norm(o.textContent) === needle);
+    if (opt) return opt;
+    // Prioridad 3: el texto contiene el código/descripcion
     opt = opts.find((o) => norm(o.textContent).includes(needle));
     return opt || null;
   };
@@ -278,6 +283,44 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
       actions: { "cfg-confirm-all": true }
   };
 
+  // Lista de razones actualizada (coincide con el dropdown de la ventana nueva).
+  // El value = código interno (data-value); el label es solo informativo para el operador.
+  // OJO: se respetan los códigos exactos, incluido "PLAYER_DID_NOT_PARTICPATE" (tal cual el DOM).
+  const CANCELLATION_REASONS = [
+      { code: "CORRELATED_OUTCOMES", label: "Bet on correlated outcomes" },
+      { code: "PLACED_AFTER_EVENT_START", label: "Bet placed after the event has started" },
+      { code: "IN_BREACH_OF_TERMS_AND_CONDITIONS", label: "Bet placed in contradiction with integrity rules and general terms" },
+      { code: "OUTCOME_SHOULD_BE_CLOSED", label: "Bet placed on an outcome that should have been suspended or closed" },
+      { code: "INCORRECT_PARTICIPANT", label: "Bet placed on markets with incorrect or mismatched participants" },
+      { code: "GOODWILL", label: "Bet void out of goodwill" },
+      { code: "AS_PER_TERMS_AND_CONDITIONS", label: "Bet voided as per terms and conditions" },
+      { code: "CANCELLED_EVENT", label: "Cancelled Event" },
+      { code: "DEAD_HEAT", label: "Dead Heat" },
+      { code: "EVENT_ABANDONED", label: "Event was abandoned" },
+      { code: "INCORRECT_ODDS", label: "Incorrect odds offered (palpable error)" },
+      { code: "INCORRECT_STATISTICS", label: "Incorrect statistics were shown" },
+      { code: "OUTCOME_ALREADY_KNOWN", label: "Late bet placed when outcome was already determined" },
+      { code: "MATCH_ENDED_IN_WALKOVER", label: "Match ended in walkover" },
+      { code: "INCORRECT_KICK_OFF_TIME", label: "Match started earlier than expected/scheduled" },
+      { code: "EVENT_POSTPONED", label: "Match will be played but 48 hours or more later" },
+      { code: "NO_GOALSCORER", label: "No goalscorer" },
+      { code: "FORMAT_CHANGE", label: "Odds offered based on an incorrect match format" },
+      { code: "RETIRED_OR_DEFAULTED", label: "Competitor retired and the bet should be voided" },
+      { code: "RESULT_UNVERIFIABLE", label: "Outcome cannot be verified officially" },
+      { code: "PLAYER_DID_NOT_PARTICPATE", label: "Player did not participate in the match or event" },
+      { code: "PLAYER_DID_NOT_START", label: "Player did not start" },
+      { code: "REGULATORY_CHANGE", label: "Regulatory change or re-licensing" },
+      { code: "PUSH", label: "Settlement of push in totals, spreads, etc" },
+      { code: "SIUU_TEST", label: "Siuu_test" },
+      { code: "STAKE_REFUNDED", label: "Stake refunded" },
+      { code: "STARTING_PITCHER_CHANGED", label: "Starting pitcher changed" },
+      { code: "SUBSTITUTION_GUARANTEE", label: "Substitution guarantee" },
+      { code: "TECHNICAL_ERROR", label: "Technical error" },
+      { code: "TERRITORY_CLOSURE", label: "Territory Closure" },
+      { code: "NO_RESULT_ASSIGNABLE", label: "The actual result was not offered as an outcome" },
+      { code: "TRANSLATION_ERROR", label: "Wrong translation or incorrect descriptive text on betslip" }
+  ];
+
   // --- LÓGICA DE CANCELACIONES ACTUALIZADA (Copia las opciones exactas) ---
   async function processHandleForNode(row, config = defaultCancellationsConfig) {
     const menuBtn = row.querySelector('.MuiIconButton-root');
@@ -301,34 +344,42 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
       
       await sleep(600); // Esperar que la tabla UI se actualice post-razón
 
-      // Función auxiliar robusta para hacer clic en Checkboxes de Material UI
-      const checkMuiCb = (parentEl, testId) => {
-          if (!parentEl) return;
-          const wrapper = parentEl.querySelector(`[data-testid="${testId}"]`);
-          if (wrapper) {
-              const input = wrapper.querySelector('input');
-              if (input) input.click(); // Hacer clic directo en el input oculto
-              else wrapper.click();
-          }
+      // --- Helpers compatibles con la ventana NUEVA ---
+      // En cada fila de contenido hay 2 checkboxes: [0] = Confirmed, [1] = Rejected
+      const clickRowCheckbox = (rowEl, kind) => {
+          if (!rowEl) return;
+          const cbs = rowEl.querySelectorAll('input[type="checkbox"]');
+          const cb = kind === 'confirm' ? cbs[0] : cbs[1];
+          if (cb) { try { cb.click(); } catch { clickEl(cb); } }
+      };
+
+      // "Select all" se distingue por el value del input (CONFIRMED / REJECTED)
+      const clickSelectAll = (kind) => {
+          const inputs = Array.from(
+              dialog.querySelectorAll('[data-testid="grid-checkbox-selection-table-select-all"] input[type="checkbox"]')
+          );
+          const want = kind === 'confirm' ? 'CONFIRMED' : 'REJECTED';
+          let target = inputs.find((i) => (i.value || '').toUpperCase() === want);
+          // Fallback posicional: 1ro = Confirmed, 2do = Rejected
+          if (!target && inputs.length >= 2) target = kind === 'confirm' ? inputs[0] : inputs[1];
+          if (target) { try { target.click(); } catch { clickEl(target); } }
       };
 
       // 2. Marcar Select All o Filas Individuales
       if (config.actions['cfg-confirm-all']) {
-          checkMuiCb(dialog, "confirm-all-checkbox");
+          clickSelectAll('confirm');
       } else if (config.actions['cfg-reject-all']) {
-          checkMuiCb(dialog, "reject-all-checkbox");
+          clickSelectAll('reject');
       } else {
-          // Si no es Select All, ir fila por fila de la tabla del popup
-          const rowsToCheck = ["row-SE", "row-SE-betmgm", "row-SE-gogo", "row-SE-expekt", "row-SE-leovegas", "row-BR", "row-BR-betmgm", "row-DK", "row-DK-expekt", "row-DK-leovegas", "row-CA", "row-CA-leovegas", "row-FI", "row-FI-expekt", "row-GB", "row-GB-leovegas", "row-GB-betmgm", "row-GB-betuk"];
-          
-          for (let rId of rowsToCheck) {
-              const rowEl = dialog.querySelector(`tr[data-row="${rId}"]`);
-              if (rowEl) {
-                  if (config.actions[`cfg-${rId}-confirm`]) {
-                      checkMuiCb(rowEl, "confirm-checkbox");
-                  } else if (config.actions[`cfg-${rId}-reject`]) {
-                      checkMuiCb(rowEl, "reject-checkbox");
-                  }
+          // Recorre las filas reales del popup (ubicaciones + brands, con data-row SIN prefijo "row-")
+          const domRows = Array.from(dialog.querySelectorAll('tr[data-row]'));
+          for (const rowEl of domRows) {
+              const domRow = rowEl.getAttribute('data-row');   // p.ej. "SE" o "SE-betmgm"
+              const cfgKey = `row-${domRow}`;                  // id interno usado por el panel
+              if (config.actions[`cfg-${cfgKey}-confirm`]) {
+                  clickRowCheckbox(rowEl, 'confirm');
+              } else if (config.actions[`cfg-${cfgKey}-reject`]) {
+                  clickRowCheckbox(rowEl, 'reject');
               }
           }
       }
@@ -441,7 +492,7 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
       { id: 'row-CA-leovegas', label: 'LeoVegas' },
       { id: 'row-FI', label: 'Finland' },
       { id: 'row-FI-expekt', label: 'Expekt' },
-      { id: 'row-GB', label: 'GB' },
+      { id: 'row-GB', label: 'United Kingdom' },
       { id: 'row-GB-leovegas', label: 'LeoVegas' },
       { id: 'row-GB-betmgm', label: 'BetMGM' },
       { id: 'row-GB-betuk', label: 'BetUK' }
@@ -472,22 +523,9 @@ registerAutomation("alerts_assistant", { name: "Alerts Assistant" }, function ()
         
         <label style="font-size:12px; font-weight:bold; color:${THEME.TEXT}; margin-bottom:6px;">Internal reason provided:</label>
         <select id="massCancelReason" style="width:100%; padding:10px; border-radius:8px; border:1px solid ${THEME.BORDER}; background:#1a1d24; color:${THEME.TEXT}; font-size:12px; outline:none; box-sizing:border-box; margin-bottom:14px;">
-          <option value="GOODWILL">GOODWILL</option>
-          <option value="CANCELLED_EVENT">CANCELLED_EVENT</option>
-          <option value="DEAD_HEAT">DEAD_HEAT</option>
-          <option value="EVENT_ABANDONED">EVENT_ABANDONED</option>
-          <option value="INCORRECT_ODDS">INCORRECT_ODDS</option>
-          <option value="INCORRECT_STATISTICS">INCORRECT_STATISTICS</option>
-          <option value="MATCH_ENDED_IN_WALKOVER">MATCH_ENDED_IN_WALKOVER</option>
-          <option value="INCORRECT_KICK_OFF_TIME">INCORRECT_KICK_OFF_TIME</option>
-          <option value="EVENT_POSTPONED">EVENT_POSTPONED</option>
-          <option value="NO_GOALSCORER">NO_GOALSCORER</option>
-          <option value="FORMAT_CHANGE">FORMAT_CHANGE</option>
-          <option value="RETIRED_OR_DEFAULTED">RETIRED_OR_DEFAULTED</option>
-          <option value="RESULT_UNVERIFIABLE">RESULT_UNVERIFIABLE</option>
-          <option value="STARTING_PITCHER_CHANGED">STARTING_PITCHER_CHANGED</option>
-          <option value="SUBSTITUTION_GUARANTEE">SUBSTITUTION_GUARANTEE</option>
-          <option value="NO_RESULT_ASSIGNABLE" selected>NO_RESULT_ASSIGNABLE</option>
+          ${CANCELLATION_REASONS.map(r =>
+            `<option value="${r.code}" title="${r.label}"${r.code === defaultCancellationsConfig.reason ? " selected" : ""}>${r.code}</option>`
+          ).join("")}
         </select>
 
         <div style="display:flex; align-items:center; margin-bottom:8px; font-size:12px; font-weight:bold; color:${THEME.TEXT}; border-bottom:2px solid rgba(255,255,255,0.1); padding-bottom:6px;">
