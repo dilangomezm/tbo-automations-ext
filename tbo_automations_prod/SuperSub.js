@@ -2,19 +2,10 @@
  * SuperSub.js
  * Automatizacion modular para la extension.
  * Consolida las estadisticas de un jugador TITULAR y su SUPLENTE como si
- * fueran un solo jugador.
+ * fueran un solo jugador, resalta las celdas que cambiaron y permite generar
+ * enlaces por estadistica hacia el evento en TBO.
  *
- * Reglas:
- *   1. Empareja Titular/Suplente desde la linea de tiempo (eventos de
- *      sustitucion). Sale (Opta-IconOff) = TITULAR (hereda el nombre);
- *      Entra (Opta-IconOn) = SUPLENTE.
- *   2. Una fila por sustitucion con la SUMA aritmetica de ambos jugadores.
- *   3. Columnas: G | A | RC | YC | Crn | S | SOnT | BS | P | C | Tk | O | FC | FW | SAV
- *   5. Resalta en rojo claro las celdas que cambiaron (el suplente aporto != 0).
- *
- * El widget de Opta carga de forma asincrona, por eso usa MutationObserver +
- * setInterval (igual que OddsConverter) para esperar a que la linea de tiempo y
- * la tabla esten disponibles y re-renderizar si cambian.
+ * Columnas: G | A | RC | YC | Crn | S | SOnT | BS | P | C | Tk | O | FC | FW | SAV
  */
 (() => {
   if (!window.registerAutomation) return;
@@ -32,6 +23,26 @@
 
         // Orden EXACTO de columnas (coincide con la tabla de datos crudos)
         var STAT_COLUMNS = ['G', 'A', 'RC', 'YC', 'Crn', 'S', 'SOnT', 'BS', 'P', 'C', 'Tk', 'O', 'FC', 'FW', 'SAV'];
+
+        // Nombre de mercado (WWWW) por columna. marketInputType=NAME, se envia URL-encoded.
+        // Crn y C no estan aqui (no interesan). BS tiene manejo especial en buildStatLink.
+        // >>> Si algun nombre de mercado no coincide con TBO, ajustalo aqui. <<<
+        var MARKET_MAP = {
+          G: 'goals',
+          A: 'Assist',
+          RC: 'Card',
+          YC: 'Card',
+          S: '+ Shots',
+          SOnT: '+ Shots on Goal',
+          P: 'Passes',
+          Tk: '+ Tackles',
+          O: '+ Offsides',
+          FC: '+ Fouls Committed',
+          FW: 'Player to Win',
+          SAV: '+ Saves'
+        };
+
+        var HOST_BASE = 'https://leo-prod-trading-bo.k8s.goldrush.llc/events/details/';
 
         // Si ya hay una instancia activa y el panel existe, no duplicar
         if (window[STATE_KEY] && window[STATE_KEY].active && document.getElementById(PANEL_ID)) {
@@ -51,6 +62,10 @@
         var lastSignature = null;
         var mainObserver = null;
         var mainInterval = null;
+
+        // Estado del campo de link (se conserva si el panel se reconstruye)
+        var eventLinkValue = '';
+        var linksGenerated = false;
 
         // -------------------------------------------------------- Utilidades
         function extractId(el, prefix) {
@@ -165,18 +180,13 @@
               changed[col] = sv !== 0;
             });
 
-            var missing = [];
-            if (!tRec) missing.push(pair.titular.name || '(titular ?)');
-            if (!sRec) missing.push(pair.suplente.name || '(suplente ?)');
-
             result.push({
               team: pair.team,
               displayName: (tRec && tRec.name) || pair.titular.name, // hereda nombre del titular
               titular: pair.titular.name,
               suplente: pair.suplente.name,
               stats: total,
-              changed: changed,
-              missing: missing
+              changed: changed
             });
           });
 
@@ -191,7 +201,7 @@
           var thead = document.createElement('thead');
           var htr = document.createElement('tr');
           var nameth = document.createElement('th');
-          nameth.textContent = 'Player (SuperSub Stats)';
+          nameth.textContent = 'Jugador (SuperSub)';
           nameth.className = 'supersub-name';
           htr.appendChild(nameth);
           STAT_COLUMNS.forEach(function (col) {
@@ -215,6 +225,8 @@
 
             STAT_COLUMNS.forEach(function (col) {
               var td = document.createElement('td');
+              td.setAttribute('data-col', col);
+              td.setAttribute('data-value', String(row.stats[col]));
               td.textContent = row.stats[col];
               if (row.changed[col]) td.classList.add('supersub-changed'); // rojo claro
               tr.appendChild(td);
@@ -233,6 +245,10 @@
             '#supersub-panel .supersub-header{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px;}',
             '#supersub-panel .supersub-title{font-size:14px;font-weight:700;margin:0;}',
             '#supersub-panel .supersub-close{border:1px solid #ccc;background:#fff;border-radius:6px;cursor:pointer;font-size:12px;line-height:1;padding:3px 7px;}',
+            '#supersub-panel .supersub-legend{display:flex;gap:16px;align-items:center;margin:0 0 8px;font-size:12px;color:#333;}',
+            '#supersub-panel .supersub-chip{display:inline-block;width:12px;height:12px;border:1px solid #bbb;border-radius:3px;margin-right:5px;vertical-align:middle;}',
+            '#supersub-panel .supersub-chip.supersub-team-home{background:#d6e6fb;}',
+            '#supersub-panel .supersub-chip.supersub-team-away{background:#d8f3dc;}',
             '.supersub-table{border-collapse:collapse;width:100%;}',
             '.supersub-table th,.supersub-table td{border:1px solid #d9d9d9;padding:4px 8px;text-align:center;}',
             '.supersub-table thead th{background:#1f1f1f;color:#fff;font-weight:600;}',
@@ -240,16 +256,97 @@
             '.supersub-table tbody tr:nth-child(even){background:#fafafa;}',
             '.supersub-table td.supersub-name.supersub-team-home{background:#d6e6fb;}',
             '.supersub-table td.supersub-name.supersub-team-away{background:#d8f3dc;}',
-            '#supersub-panel .supersub-legend{display:flex;gap:16px;align-items:center;margin:0 0 8px;font-size:12px;color:#333;}',
-            '#supersub-panel .supersub-chip{display:inline-block;width:12px;height:12px;border:1px solid #bbb;border-radius:3px;margin-right:5px;vertical-align:middle;}',
-            '#supersub-panel .supersub-chip.supersub-team-home{background:#d6e6fb;}',
-            '#supersub-panel .supersub-chip.supersub-team-away{background:#d8f3dc;}',
-            '.supersub-table td.supersub-changed{background:#f8caca !important;color:#7a0010;font-weight:700;}'
+            '.supersub-table td.supersub-changed{background:#f8caca !important;color:#7a0010;font-weight:700;}',
+            '.supersub-table a.supersub-link{color:#0645ad;text-decoration:underline;font-weight:700;}',
+            '#supersub-panel .supersub-footer{display:flex;gap:8px;align-items:center;margin:10px 0 2px;flex-wrap:wrap;}',
+            '#supersub-panel .supersub-lbl{font-size:12px;font-weight:600;white-space:nowrap;}',
+            '#supersub-panel .supersub-input{flex:1;min-width:280px;padding:6px 8px;border:1px solid #ccc;border-radius:6px;font-size:12px;}',
+            '#supersub-panel .supersub-generate{border:none;background:#1f6feb;color:#fff;border-radius:6px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;}',
+            '#supersub-panel .supersub-generate:hover{background:#1a5fd0;}'
           ].join('\n');
           var style = document.createElement('style');
           style.id = 'supersub-styles';
           style.textContent = css;
           (document.head || document.documentElement).appendChild(style);
+        }
+
+        // --------------------------------------------- Construccion de links
+        // Transforma el nombre mostrado en el "outcome" (ZZZZ):
+        //  - "F. Torres"        -> "Torres"          (inicial + punto -> solo el resto)
+        //  - "G. de Arrascaeta" -> "de Arrascaeta"
+        //  - "Matheus Cunha"    -> "Matheus Cunha"   (nombre completo se deja igual)
+        function outcomeName(displayName) {
+          var name = (displayName || '').trim();
+          var m = name.match(/^[^\s.]\.\s*(.+)$/); // una inicial, punto, luego el resto
+          return m ? m[1].trim() : name;
+        }
+
+        // Extrae la base ".../events/details/<id>" del link que pega el usuario.
+        function parseEventBase(input) {
+          input = (input || '').trim();
+          if (!input) return null;
+          var m = input.match(/^(https?:\/\/[^\s?#]*\/events\/details\/)(\d+)/);
+          if (m) return m[1] + m[2];
+          var only = input.match(/(\d{3,})/); // por si pegan solo el id
+          if (only) return HOST_BASE + only[1];
+          return null;
+        }
+
+        // Construye el href para una estadistica dada. Devuelve null si no aplica.
+        function buildStatLink(base, col, playerName) {
+          var params = 'detail=markets&groups=player-props&scores=odds,risk';
+          var zzzz = outcomeName(playerName);
+
+          if (col === 'BS') {
+            // Caso especial: market = "<jugador> 1st Shot (inc ET)" y SIN outcome
+            var wwwwBs = zzzz + ' 1st Shot (inc ET)';
+            return base + '?' + params + '&market=' + encodeURIComponent(wwwwBs) + '&marketInputType=NAME';
+          }
+
+          var market = MARKET_MAP[col];
+          if (!market) return null; // Crn, C u otras sin mapping -> sin enlace
+          return base + '?' + params + '&market=' + encodeURIComponent(market) +
+                 '&marketInputType=NAME&outcome=' + encodeURIComponent(zzzz);
+        }
+
+        // Convierte en enlaces las celdas modificadas (excepto Crn y C).
+        function applyLinks(table, base) {
+          if (mainObserver) { try { mainObserver.disconnect(); } catch (e) {} }
+
+          var rows = table.querySelectorAll('tbody tr');
+          Array.prototype.forEach.call(rows, function (tr) {
+            var nameCell = tr.querySelector('.supersub-name');
+            if (!nameCell) return;
+            var playerName = nameCell.textContent.trim();
+
+            var cells = tr.querySelectorAll('td[data-col]');
+            Array.prototype.forEach.call(cells, function (td) {
+              var col = td.getAttribute('data-col');
+              if (!td.classList.contains('supersub-changed')) return; // solo las que cambiaron
+              if (col === 'Crn' || col === 'C') return;               // excepciones
+
+              var href = buildStatLink(base, col, playerName);
+              if (!href) return;
+
+              var value = td.getAttribute('data-value');
+              if (value == null) value = td.textContent;
+
+              td.textContent = '';
+              var a = document.createElement('a');
+              a.href = href;
+              a.target = '_blank';
+              a.rel = 'noopener noreferrer';
+              a.className = 'supersub-link';
+              a.textContent = value;
+              td.appendChild(a);
+            });
+          });
+
+          if (mainObserver) {
+            try {
+              mainObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+            } catch (e) {}
+          }
         }
 
         // --------------------------------------------------- Cierre / limpieza
@@ -283,11 +380,12 @@
           var panel = document.createElement('div');
           panel.id = PANEL_ID;
 
+          // Header con boton de cierre
           var header = document.createElement('div');
           header.className = 'supersub-header';
           var title = document.createElement('h3');
           title.className = 'supersub-title';
-          title.textContent = 'SuperSub - Substitutions: (' + consolidated.length + ')';
+          title.textContent = 'SuperSub - Titular + Suplente (' + consolidated.length + ')';
           var closeBtn = document.createElement('button');
           closeBtn.className = 'supersub-close';
           closeBtn.type = 'button';
@@ -296,27 +394,63 @@
           closeBtn.addEventListener('click', closeTool);
           header.appendChild(title);
           header.appendChild(closeBtn);
-
           panel.appendChild(header);
 
           // Leyenda de colores por equipo
           var legend = document.createElement('div');
           legend.className = 'supersub-legend';
           var legHome = document.createElement('span');
-          legHome.innerHTML = '<span class="supersub-chip supersub-team-home"></span>Home';
+          legHome.innerHTML = '<span class="supersub-chip supersub-team-home"></span>Local';
           var legAway = document.createElement('span');
-          legAway.innerHTML = '<span class="supersub-chip supersub-team-away"></span>Away';
+          legAway.innerHTML = '<span class="supersub-chip supersub-team-away"></span>Visitante';
           legend.appendChild(legHome);
           legend.appendChild(legAway);
           panel.appendChild(legend);
 
-          panel.appendChild(buildTable(consolidated));
+          // Tabla de resultados
+          var tableNode = buildTable(consolidated);
+          panel.appendChild(tableNode);
+
+          // Campo "TBO Event Link" + boton "Generate Links"
+          var footer = document.createElement('div');
+          footer.className = 'supersub-footer';
+          var lbl = document.createElement('label');
+          lbl.className = 'supersub-lbl';
+          lbl.textContent = 'TBO Event Link';
+          var input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'supersub-input';
+          input.placeholder = HOST_BASE + '1591547';
+          input.value = eventLinkValue;
+          input.addEventListener('input', function () { eventLinkValue = input.value; });
+          var genBtn = document.createElement('button');
+          genBtn.type = 'button';
+          genBtn.className = 'supersub-generate';
+          genBtn.textContent = 'Generate Links';
+          genBtn.addEventListener('click', function () {
+            eventLinkValue = input.value;
+            var base = parseEventBase(eventLinkValue);
+            if (!base) { input.style.borderColor = '#c00'; input.focus(); return; }
+            input.style.borderColor = '';
+            linksGenerated = true;
+            applyLinks(tableNode, base);
+          });
+          footer.appendChild(lbl);
+          footer.appendChild(input);
+          footer.appendChild(genBtn);
+          panel.appendChild(footer);
 
           // Inserta ANTES del contenedor de estadisticas (arriba para comparar mejor);
           // si no existe, al inicio del body como respaldo.
           var anchor = document.getElementById('opta-player-stats-container') || document.querySelector('.Opta_F_MP_container');
           if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(panel, anchor);
           else document.body.insertBefore(panel, document.body.firstChild);
+
+          // Si ya se habian generado los enlaces, reaplicarlos tras el re-render
+          if (linksGenerated) {
+            var restoreBase = parseEventBase(eventLinkValue);
+            if (restoreBase) applyLinks(tableNode, restoreBase);
+          }
 
           window.__SuperSubData = consolidated;
         }
