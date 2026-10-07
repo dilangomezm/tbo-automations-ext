@@ -24,6 +24,11 @@
         // Orden EXACTO de columnas (coincide con la tabla de datos crudos)
         var STAT_COLUMNS = ['G', 'A', 'RC', 'YC', 'Crn', 'S', 'SOnT', 'BS', 'P', 'C', 'Tk', 'O', 'FC', 'FW', 'SAV'];
 
+        // Columnas no implementadas: no se muestran, no se marcan ni generan links.
+        // (Se siguen leyendo del HTML crudo por posicion, solo no se renderizan.)
+        var HIDDEN_COLUMNS = ['Crn', 'P', 'C', 'O'];
+        var DISPLAY_COLUMNS = STAT_COLUMNS.filter(function (c) { return HIDDEN_COLUMNS.indexOf(c) === -1; });
+
         // Nombre de mercado (WWWW) por columna. marketInputType=NAME, se envia URL-encoded.
         // Crn y C no estan aqui (no interesan). BS tiene manejo especial en buildStatLink.
         // >>> Si algun nombre de mercado no coincide con TBO, ajustalo aqui. <<<
@@ -34,9 +39,7 @@
           YC: 'Card',
           S: '+ Shots',
           SOnT: '+ Shots on Goal',
-          P: 'Passes',
           Tk: '+ Tackles',
-          O: '+ Offsides',
           FC: '+ Fouls Committed',
           FW: 'Player to Win',
           SAV: '+ Saves'
@@ -201,10 +204,10 @@
           var thead = document.createElement('thead');
           var htr = document.createElement('tr');
           var nameth = document.createElement('th');
-          nameth.textContent = 'Jugador (SuperSub)';
+          nameth.textContent = 'Player (SuperSub)';
           nameth.className = 'supersub-name';
           htr.appendChild(nameth);
-          STAT_COLUMNS.forEach(function (col) {
+          DISPLAY_COLUMNS.forEach(function (col) {
             var th = document.createElement('th');
             th.textContent = col;
             htr.appendChild(th);
@@ -223,7 +226,7 @@
             nameTd.title = row.titular + ' + ' + row.suplente;
             tr.appendChild(nameTd);
 
-            STAT_COLUMNS.forEach(function (col) {
+            DISPLAY_COLUMNS.forEach(function (col) {
               var td = document.createElement('td');
               td.setAttribute('data-col', col);
               td.setAttribute('data-value', String(row.stats[col]));
@@ -274,11 +277,17 @@
         // Transforma el nombre mostrado en el "outcome" (ZZZZ):
         //  - "F. Torres"        -> "Torres"          (inicial + punto -> solo el resto)
         //  - "G. de Arrascaeta" -> "de Arrascaeta"
-        //  - "Matheus Cunha"    -> "Matheus Cunha"   (nombre completo se deja igual)
+        //  - "Matheus Cunha"    -> "Cunha"           (nombre + apellido -> solo la segunda parte)
+        //  - "Leo Pereira"      -> "Pereira"
+        //  - "Vitao"            -> "Vitao"           (una sola palabra -> se deja igual)
+        //  Siempre se eliminan los acentos: "Leo" <- "L\u00e9o", "Vitao" <- "Vit\u00e3o"
         function outcomeName(displayName) {
-          var name = (displayName || '').trim();
+          var name = (displayName || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          name = name.replace(/\s+/g, ' ').trim();
           var m = name.match(/^[^\s.]\.\s*(.+)$/); // una inicial, punto, luego el resto
-          return m ? m[1].trim() : name;
+          if (m) return m[1].trim();
+          var sp = name.indexOf(' ');
+          return sp > -1 ? name.substring(sp + 1).trim() : name;
         }
 
         // Extrae la base ".../events/details/<id>" del link que pega el usuario.
@@ -323,7 +332,6 @@
             Array.prototype.forEach.call(cells, function (td) {
               var col = td.getAttribute('data-col');
               if (!td.classList.contains('supersub-changed')) return; // solo las que cambiaron
-              if (col === 'Crn' || col === 'C') return;               // excepciones
 
               var href = buildStatLink(base, col, playerName);
               if (!href) return;
@@ -368,7 +376,7 @@
 
         function signatureOf(consolidated) {
           return consolidated.map(function (r) {
-            return r.displayName + ':' + STAT_COLUMNS.map(function (c) { return r.stats[c]; }).join(',');
+            return r.displayName + ':' + DISPLAY_COLUMNS.map(function (c) { return r.stats[c]; }).join(',');
           }).join('|');
         }
 
@@ -385,24 +393,42 @@
           header.className = 'supersub-header';
           var title = document.createElement('h3');
           title.className = 'supersub-title';
-          title.textContent = 'SuperSub - Titular + Suplente (' + consolidated.length + ')';
+          title.textContent = 'SuperSub - Substitutions: (' + consolidated.length + ')';
           var closeBtn = document.createElement('button');
           closeBtn.className = 'supersub-close';
           closeBtn.type = 'button';
           closeBtn.textContent = 'x';
           closeBtn.title = 'Cerrar';
           closeBtn.addEventListener('click', closeTool);
+
+          var infoBtn = document.createElement('button');
+          infoBtn.type = 'button';
+          infoBtn.title = 'Info / documentation';
+          infoBtn.setAttribute('data-tbo-info', '1');
+          infoBtn.setAttribute('style', 'width: 26px; height: 22px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.02); color: rgb(240, 166, 74); font-weight: 650; cursor: pointer; padding: 0px; line-height: 20px; font-size: 14px; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; box-sizing: border-box;');
+          infoBtn.textContent = '\u24D8';
+          infoBtn.addEventListener('click', function () {
+            window.open('https://drive.google.com/drive/folders/1NOZpWpXB6C8CnYMiFwhA-T2JC1oFdPGV', '_blank', 'noopener');
+          });
+
+          var actions = document.createElement('div');
+          actions.style.display = 'flex';
+          actions.style.gap = '6px';
+          actions.style.alignItems = 'center';
+          actions.appendChild(infoBtn);
+          actions.appendChild(closeBtn);
+
           header.appendChild(title);
-          header.appendChild(closeBtn);
+          header.appendChild(actions);
           panel.appendChild(header);
 
           // Leyenda de colores por equipo
           var legend = document.createElement('div');
           legend.className = 'supersub-legend';
           var legHome = document.createElement('span');
-          legHome.innerHTML = '<span class="supersub-chip supersub-team-home"></span>Local';
+          legHome.innerHTML = '<span class="supersub-chip supersub-team-home"></span>Home';
           var legAway = document.createElement('span');
-          legAway.innerHTML = '<span class="supersub-chip supersub-team-away"></span>Visitante';
+          legAway.innerHTML = '<span class="supersub-chip supersub-team-away"></span>Away';
           legend.appendChild(legHome);
           legend.appendChild(legAway);
           panel.appendChild(legend);
